@@ -1,0 +1,26 @@
+name: Build macOS DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.13.0'
+          channel: 'stable'
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter build macos --release
+      - name: Create DMG
+        run: |
+          cd build/macos/Build/Products/Release
+          hdiutil create -volname "OpenMailbox" -srcfolder . -ov -format UDZO OpenMailbox.dmg
+      - uses: softprops/action-gh-release@v1
+        with:
+          files: build/macos/Build/Products/Release/OpenMailbox.dmg
