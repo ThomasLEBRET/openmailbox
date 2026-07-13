@@ -53,17 +53,24 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
         .toList();
   }
 
+  String? _sendError;
+
   Future<void> _send() async {
     if (!_formKey.currentState!.validate()) return;
     final config = ref.read(accountConfigProvider).value;
     if (config == null) return;
 
-    setState(() => _isSending = true);
+    setState(() {
+      _isSending = true;
+      _sendError = null;
+    });
     final smtp = SmtpService();
     try {
       final storage = ref.read(storageServiceProvider);
       final password = await storage.readSmtpPassword();
-      if (password == null) return;
+      if (password == null) {
+        throw StateError('Mot de passe SMTP introuvable');
+      }
 
       await smtp.connect(config.smtp, password);
       await smtp.sendMessage(
@@ -75,6 +82,8 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
         body: _body.text,
       );
       if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) setState(() => _sendError = 'Échec de l\'envoi : $e');
     } finally {
       await smtp.disconnect();
       if (mounted) setState(() => _isSending = false);
@@ -84,10 +93,11 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560, maxHeight: 640),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Form(
             key: _formKey,
             child: Column(
@@ -98,7 +108,10 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                     Expanded(
                       child: Text(
                         'Nouveau message',
-                        style: Theme.of(context).textTheme.titleMedium,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                     ),
                     IconButton(
@@ -107,9 +120,10 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
                 TextFormField(
                   controller: _to,
-                  decoration: const InputDecoration(labelText: 'To'),
+                  decoration: const InputDecoration(labelText: 'À'),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) return 'Requis';
                     final invalid = value
@@ -120,17 +134,20 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                     return invalid ? 'Adresse email invalide' : null;
                   },
                 ),
+                const SizedBox(height: 8),
                 TextFormField(
                   controller: _cc,
                   decoration: const InputDecoration(labelText: 'Cc'),
                 ),
+                const SizedBox(height: 8),
                 TextFormField(
                   controller: _bcc,
-                  decoration: const InputDecoration(labelText: 'Bcc'),
+                  decoration: const InputDecoration(labelText: 'Cci'),
                 ),
+                const SizedBox(height: 8),
                 TextFormField(
                   controller: _subject,
-                  decoration: const InputDecoration(labelText: 'Subject'),
+                  decoration: const InputDecoration(labelText: 'Objet'),
                   validator: (value) =>
                       (value == null || value.trim().isEmpty) ? 'Requis' : null,
                 ),
@@ -139,7 +156,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                   child: TextFormField(
                     controller: _body,
                     decoration: const InputDecoration(
-                      labelText: 'Body',
+                      labelText: 'Message',
                       alignLabelWithHint: true,
                     ),
                     maxLines: null,
@@ -149,8 +166,21 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                 ),
                 const SizedBox(height: 12),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
+                    if (_sendError != null)
+                      Expanded(
+                        child: Text(
+                          _sendError!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      )
+                    else
+                      const Spacer(),
                     FilledButton.icon(
                       onPressed: _isSending ? null : _send,
                       icon: _isSending
@@ -159,8 +189,8 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                               width: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.send),
-                      label: const Text('Send'),
+                          : const Icon(Icons.send_rounded, size: 18),
+                      label: const Text('Envoyer'),
                     ),
                   ],
                 ),

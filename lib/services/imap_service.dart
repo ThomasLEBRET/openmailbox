@@ -11,10 +11,14 @@ import '../models/folder.dart';
 class ImapService {
   ImapClient? _client;
 
+  static const _connectTimeout = Duration(seconds: 15);
+
   Future<void> connect(ImapConfig config, String password) async {
     final client = ImapClient(isLogEnabled: false);
-    await client.connectToServer(config.host, config.port, isSecure: true);
-    await client.login(config.username, password);
+    await client
+        .connectToServer(config.host, config.port, isSecure: true)
+        .timeout(_connectTimeout);
+    await client.login(config.username, password).timeout(_connectTimeout);
     _client = client;
   }
 

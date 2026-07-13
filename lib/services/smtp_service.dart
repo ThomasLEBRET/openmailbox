@@ -6,17 +6,25 @@ import '../models/config.dart';
 class SmtpService {
   SmtpClient? _client;
 
+  static const _connectTimeout = Duration(seconds: 15);
+
   Future<void> connect(SmtpConfig config, String password) async {
     final client = SmtpClient(config.host, isLogEnabled: false);
-    await client.connectToServer(config.host, config.port, isSecure: config.port == 465);
-    await client.ehlo();
+    await client
+        .connectToServer(config.host, config.port, isSecure: config.port == 465)
+        .timeout(_connectTimeout);
+    await client.ehlo().timeout(_connectTimeout);
     if (config.port != 465) {
-      await client.startTls();
+      await client.startTls().timeout(_connectTimeout);
     }
     if (client.serverInfo.supportsAuth(AuthMechanism.plain)) {
-      await client.authenticate(config.username, password, AuthMechanism.plain);
+      await client
+          .authenticate(config.username, password, AuthMechanism.plain)
+          .timeout(_connectTimeout);
     } else {
-      await client.authenticate(config.username, password, AuthMechanism.login);
+      await client
+          .authenticate(config.username, password, AuthMechanism.login)
+          .timeout(_connectTimeout);
     }
     _client = client;
   }

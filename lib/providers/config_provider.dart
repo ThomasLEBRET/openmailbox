@@ -14,17 +14,25 @@ class AccountConfigNotifier extends AsyncNotifier<MailAccountConfig?> {
     return ref.read(storageServiceProvider).loadAccountConfig();
   }
 
+  /// Persists the account. Passwords left null (or empty) keep the
+  /// currently stored value — used when editing settings.
   Future<void> save({
     required MailAccountConfig config,
-    required String imapPassword,
-    required String smtpPassword,
+    String? imapPassword,
+    String? smtpPassword,
   }) async {
     final storage = ref.read(storageServiceProvider);
     await storage.saveAccountConfig(config);
-    await storage.saveCredentials(
-      imapPassword: imapPassword,
-      smtpPassword: smtpPassword,
-    );
+    final imap = (imapPassword != null && imapPassword.isNotEmpty)
+        ? imapPassword
+        : await storage.readImapPassword();
+    final smtp = (smtpPassword != null && smtpPassword.isNotEmpty)
+        ? smtpPassword
+        : await storage.readSmtpPassword();
+    if (imap == null || smtp == null) {
+      throw StateError('Mot de passe requis');
+    }
+    await storage.saveCredentials(imapPassword: imap, smtpPassword: smtp);
     state = AsyncData(config);
   }
 
