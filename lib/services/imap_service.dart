@@ -189,6 +189,9 @@ class ImapService {
       final mailboxes = await _timed(
         'list-status',
         () => client.listMailboxes(
+          // Recursive: Gmail nests everything under "[Gmail]/" — a
+          // top-level listing misses Trash, Sent, Drafts entirely.
+          recursive: true,
           returnOptions: [
             ReturnOption.status(['MESSAGES', 'UNSEEN']),
           ],
@@ -205,7 +208,8 @@ class ImapService {
       ];
     }
 
-    final mailboxes = await _timed('list', () => client.listMailboxes());
+    final mailboxes =
+        await _timed('list', () => client.listMailboxes(recursive: true));
     final selectable =
         mailboxes.where((box) => !box.isNotSelectable).toList();
 

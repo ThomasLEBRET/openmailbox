@@ -233,92 +233,113 @@ class _AccountSwitcher extends ConsumerWidget {
     if (current == null) return const SizedBox.shrink();
     final accounts = accountsState!.accounts;
 
+    final side = AppColors.sidebarOf(context);
+    final accent = AppColors.accentOf(context);
+
+    Widget avatarFor(String label, {double radius = 10}) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: AppColors.avatarColorFor(label),
+        child: Text(
+          label.isEmpty ? '?' : label[0].toUpperCase(),
+          style: TextStyle(
+            fontSize: radius,
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-      child: PopupMenuButton<String>(
-        tooltip: 'Changer de compte',
-        offset: const Offset(0, 42),
-        onSelected: (value) async {
-          if (value == '_add') {
-            onAddAccount();
-            return;
-          }
-          await ref.read(accountsProvider.notifier).switchTo(value);
-          // Fresh data for the newly selected account.
-          ref.read(emailListProvider.notifier).sync();
-          ref.read(folderListProvider.notifier).refresh();
-        },
-        itemBuilder: (context) => [
-          for (final account in accounts)
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: PopupMenuButton<String>(
+          tooltip: 'Changer de compte',
+          offset: const Offset(0, 44),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          onSelected: (value) async {
+            if (value == '_add') {
+              onAddAccount();
+              return;
+            }
+            await ref.read(accountsProvider.notifier).switchTo(value);
+            // Fresh data for the newly selected account.
+            ref.read(emailListProvider.notifier).sync();
+            ref.read(folderListProvider.notifier).refresh();
+          },
+          itemBuilder: (context) => [
+            for (final account in accounts)
+              PopupMenuItem(
+                value: account.id,
+                child: Row(
+                  children: [
+                    avatarFor(account.label, radius: 12),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        account.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: account.id == current.id
+                              ? FontWeight.w600
+                              : FontWeight.w400,
+                        ),
+                      ),
+                    ),
+                    if (account.id == current.id) ...[
+                      const SizedBox(width: 8),
+                      Icon(Icons.check_rounded, size: 16, color: accent),
+                    ],
+                  ],
+                ),
+              ),
+            const PopupMenuDivider(),
             PopupMenuItem(
-              value: account.id,
+              value: '_add',
               child: Row(
                 children: [
-                  Icon(
-                    account.id == current.id
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    size: 16,
-                    color: account.id == current.id
-                        ? AppColors.accentOf(context)
-                        : null,
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: accent.withValues(alpha: 0.6)),
+                    ),
+                    child: Icon(Icons.add, size: 15, color: accent),
                   ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(account.label,
-                        overflow: TextOverflow.ellipsis),
-                  ),
+                  const SizedBox(width: 10),
+                  const Text('Ajouter un compte',
+                      style: TextStyle(fontSize: 13)),
                 ],
               ),
             ),
-          const PopupMenuDivider(),
-          const PopupMenuItem(
-            value: '_add',
+          ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: side.chip,
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Row(
               children: [
-                Icon(Icons.add, size: 16),
-                SizedBox(width: 8),
-                Text('Ajouter un compte'),
+                avatarFor(current.label),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    current.label,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: side.text, fontSize: 12),
+                  ),
+                ),
+                Icon(Icons.expand_more_rounded, size: 16, color: side.text),
               ],
             ),
-          ),
-        ],
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: AppColors.sidebarOf(context).chip,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 10,
-                backgroundColor: AppColors.avatarColorFor(current.label),
-                child: Text(
-                  current.label.isEmpty
-                      ? '?'
-                      : current.label[0].toUpperCase(),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  current.label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: AppColors.sidebarOf(context).text,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              Icon(Icons.unfold_more_rounded,
-                  size: 15, color: AppColors.sidebarOf(context).text),
-            ],
           ),
         ),
       ),
