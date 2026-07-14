@@ -71,22 +71,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  /// Optimistic delete: the list updates instantly; a SnackBar reports a
-  /// server failure (the email is restored by the provider).
+  void _notify(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        width: 420,
+        duration: const Duration(seconds: 3),
+      ));
+  }
+
+  /// Optimistic delete: the list updates instantly; a SnackBar confirms
+  /// or reports a server failure (the email is restored by the provider).
   Future<void> _deleteEmail(Email email) async {
     if (_selected?.uid == email.uid) {
       setState(() => _selected = null);
     }
     try {
-      await ref.read(emailListProvider.notifier).deleteEmail(email.uid);
+      final movedToTrash =
+          await ref.read(emailListProvider.notifier).deleteEmail(email.uid);
+      _notify(movedToTrash
+          ? 'Email déplacé vers la corbeille'
+          : 'Email supprimé définitivement');
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Échec de la suppression — email restauré ($e)'),
-          ),
-        );
-      }
+      _notify('Échec de la suppression — email restauré ($e)');
     }
   }
 
@@ -100,8 +110,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         body: body,
       );
 
-  void _openCompose({String to = '', String subject = '', String body = ''}) {
-    showDialog<bool>(
+  Future<void> _openCompose(
+      {String to = '', String subject = '', String body = ''}) async {
+    final sent = await showDialog<bool>(
       context: context,
       builder: (_) => ComposeScreen(
         initialTo: to,
@@ -109,6 +120,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         initialBody: body,
       ),
     );
+    if (sent == true && mounted) {
+      _notify('Message envoyé');
+      // Bump the Envoyés counter in the background.
+      ref.read(folderListProvider.notifier).refresh();
+    }
   }
 
   Future<void> _openSettings() async {
@@ -120,6 +136,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
     if (saved == true && mounted) {
+      _notify('Paramètres enregistrés');
       await _refreshAll();
     }
   }

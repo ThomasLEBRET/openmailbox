@@ -33,6 +33,44 @@ class EmailReader extends StatelessWidget {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  /// Strips `@media` rules from embedded `<style>` blocks: flutter_html's
+  /// CSS parser crashes on them (LateInitializationError in its
+  /// DeclarationVisitor), which blanked the whole reader pane.
+  static String _sanitizeHtml(String html) {
+    return html.replaceAllMapped(
+      RegExp(r'<style[^>]*>([\s\S]*?)</style>', caseSensitive: false),
+      (match) {
+        final css = _stripMediaRules(match.group(1) ?? '');
+        return '<style>$css</style>';
+      },
+    );
+  }
+
+  static String _stripMediaRules(String css) {
+    final result = StringBuffer();
+    var index = 0;
+    while (index < css.length) {
+      final start = css.indexOf('@media', index);
+      if (start == -1) {
+        result.write(css.substring(index));
+        break;
+      }
+      result.write(css.substring(index, start));
+      final open = css.indexOf('{', start);
+      if (open == -1) break; // Malformed: drop the tail.
+      var depth = 1;
+      var cursor = open + 1;
+      while (cursor < css.length && depth > 0) {
+        final char = css[cursor];
+        if (char == '{') depth++;
+        if (char == '}') depth--;
+        cursor++;
+      }
+      index = cursor;
+    }
+    return result.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -151,7 +189,7 @@ class EmailReader extends StatelessWidget {
       return SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Html(
-          data: content,
+          data: _sanitizeHtml(content),
           onLinkTap: (url, _, _) => _openLink(url),
         ),
       );

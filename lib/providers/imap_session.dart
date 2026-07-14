@@ -35,12 +35,17 @@ Future<T> withImapSession<T>(
 
   final imap = ref.read(
       background ? imapBackgroundServiceProvider : imapServiceProvider);
-  await imap.ensureConnected(config.imap, password);
-  try {
-    return await action(imap);
-  } catch (_) {
-    imap.reset();
+  // Whole operations are serialized per connection, and each attempt is
+  // capped: nothing may hang the UI forever on a dead socket.
+  return imap.runExclusive(() async {
+    const opTimeout = Duration(seconds: 25);
     await imap.ensureConnected(config.imap, password);
-    return action(imap);
-  }
+    try {
+      return await action(imap).timeout(opTimeout);
+    } catch (_) {
+      imap.reset();
+      await imap.ensureConnected(config.imap, password);
+      return await action(imap).timeout(opTimeout);
+    }
+  });
 }

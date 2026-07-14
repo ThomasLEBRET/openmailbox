@@ -33,7 +33,7 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     ref.read(emailSyncingProvider.notifier).set(true);
     try {
       final folder = ref.read(currentFolderProvider);
-      state = await AsyncValue.guard(() async {
+      final result = await AsyncValue.guard(() async {
         final emails = await withImapSession(
             ref, (imap) => imap.fetchRecentMessages(folder));
         emails.sort((a, b) => b.date.compareTo(a.date));
@@ -42,6 +42,11 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
             .replaceFolderEmails(folder, emails);
         return emails;
       });
+      // The user may have switched folders while this sync ran — a stale
+      // result must not overwrite the newly selected folder's list.
+      if (ref.read(currentFolderProvider) == folder) {
+        state = result;
+      }
     } finally {
       ref.read(emailSyncingProvider.notifier).set(false);
     }
@@ -97,12 +102,15 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   /// already in the trash). Optimistic: the email leaves the list and the
   /// counts shift immediately; if the server call then fails, everything
   /// is restored and the error rethrown for the caller to surface.
-  Future<void> deleteEmail(int uid) async {
+  ///
+  /// Returns true when the email was moved to the trash, false when it
+  /// was permanently deleted.
+  Future<bool> deleteEmail(int uid) async {
     final folder = ref.read(currentFolderProvider);
     final storage = ref.read(storageServiceProvider);
     final emails = state.value ?? const <Email>[];
     final removed = emails.where((email) => email.uid == uid).firstOrNull;
-    if (removed == null) return;
+    if (removed == null) return false;
     final wasUnread = !removed.isRead;
 
     final folders = ref.read(folderListProvider).value ?? const [];
@@ -156,6 +164,7 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
       }
       rethrow;
     }
+    return movesToTrash;
   }
 }
 

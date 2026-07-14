@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 
@@ -18,8 +20,50 @@ class ImapService {
   String? _selectedPath;
   Mailbox? _selectedBox;
   Future<ImapClient>? _connecting;
+  Future<void>? _lock;
+  Timer? _keepAlive;
 
   static const _connectTimeout = Duration(seconds: 15);
+  static const _keepAliveInterval = Duration(minutes: 2);
+
+  /// Serializes whole operations on this connection. Without this, a
+  /// [reset] triggered by one flow while another flow's command is in
+  /// flight leaves that command's future pending forever (enough_mail
+  /// stashes queued commands on disconnect instead of failing them) —
+  /// which showed up as a spinner that never resolved.
+  Future<T> runExclusive<T>(Future<T> Function() fn) {
+    final previous = _lock;
+    final completer = Completer<void>();
+    _lock = completer.future;
+    return () async {
+      if (previous != null) {
+        await previous;
+      }
+      try {
+        return await fn();
+      } finally {
+        completer.complete();
+      }
+    }();
+  }
+
+  /// Keeps the session warm: Mailo drops idle connections, and paying
+  /// connect+login (measured up to 3.5s) on the next user action made
+  /// refreshes feel slow "for nothing".
+  void _startKeepAlive() {
+    _keepAlive?.cancel();
+    _keepAlive = Timer.periodic(_keepAliveInterval, (_) {
+      runExclusive(() async {
+        final client = _client;
+        if (client == null || !client.isConnected) return;
+        try {
+          await client.noop().timeout(const Duration(seconds: 10));
+        } catch (_) {
+          reset(); // Dead session: next operation reconnects cleanly.
+        }
+      });
+    });
+  }
 
   /// Times an operation and logs its duration — diagnosis aid for slow
   /// servers. Never logs credentials or message content.
@@ -73,12 +117,15 @@ class ImapService {
     _connectedPassword = password;
     _selectedPath = null;
     _selectedBox = null;
+    _startKeepAlive();
     return fresh;
   }
 
   /// Drops the connection so the next [ensureConnected] starts clean.
   /// Used after errors where the session state is unknown.
   void reset() {
+    _keepAlive?.cancel();
+    _keepAlive = null;
     final client = _client;
     _client = null;
     _connectedConfig = null;
@@ -90,6 +137,8 @@ class ImapService {
   }
 
   Future<void> disconnect() async {
+    _keepAlive?.cancel();
+    _keepAlive = null;
     final client = _client;
     _client = null;
     _connectedConfig = null;
