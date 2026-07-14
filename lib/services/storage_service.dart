@@ -82,17 +82,20 @@ class StorageService {
     final dbPath = p.join(dir.path, 'openmailbox.db');
     final db = await openDatabase(
       dbPath,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE emails (
             uid INTEGER NOT NULL,
             folder TEXT NOT NULL,
             "from" TEXT NOT NULL,
+            fromEmail TEXT NOT NULL DEFAULT '',
             subject TEXT NOT NULL,
             date INTEGER NOT NULL,
             preview TEXT NOT NULL,
             isRead INTEGER NOT NULL,
+            body TEXT,
+            bodyIsHtml INTEGER,
             PRIMARY KEY (uid, folder)
           )
         ''');
@@ -104,6 +107,14 @@ class StorageService {
           // safe to rebuild from the next sync.
           await db.execute('DROP TABLE IF EXISTS folders');
           await db.execute(_createFoldersTable);
+        }
+        if (oldVersion < 3) {
+          // v3 caches fetched message bodies for instant re-opening and
+          // stores the sender's bare address for replies.
+          await db.execute('ALTER TABLE emails ADD COLUMN body TEXT');
+          await db.execute('ALTER TABLE emails ADD COLUMN bodyIsHtml INTEGER');
+          await db.execute(
+              "ALTER TABLE emails ADD COLUMN fromEmail TEXT NOT NULL DEFAULT ''");
         }
       },
     );
@@ -148,25 +159,76 @@ class StorageService {
     }).toList();
   }
 
-  Future<void> saveEmails(List<Email> emails) async {
+  /// Replaces the cached list of [folder] with [emails]: metadata is
+  /// upserted (cached bodies survive) and rows no longer on the server
+  /// are removed.
+  Future<void> replaceFolderEmails(String folder, List<Email> emails) async {
     final db = await _database();
     final batch = db.batch();
+    if (emails.isEmpty) {
+      batch.delete('emails', where: 'folder = ?', whereArgs: [folder]);
+    } else {
+      final uids = emails.map((e) => e.uid).join(',');
+      batch.rawDelete(
+        'DELETE FROM emails WHERE folder = ? AND uid NOT IN ($uids)',
+        [folder],
+      );
+    }
     for (final email in emails) {
-      batch.insert(
-        'emails',
-        {
-          'uid': email.uid,
-          'folder': email.folder,
-          'from': email.from,
-          'subject': email.subject,
-          'date': email.date.millisecondsSinceEpoch,
-          'preview': email.preview,
-          'isRead': email.isRead ? 1 : 0,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
+      batch.rawInsert(
+        '''
+        INSERT INTO emails
+          (uid, folder, "from", fromEmail, subject, date, preview, isRead)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(uid, folder) DO UPDATE SET
+          "from" = excluded."from",
+          fromEmail = excluded.fromEmail,
+          subject = excluded.subject,
+          date = excluded.date,
+          preview = excluded.preview,
+          isRead = excluded.isRead
+        ''',
+        [
+          email.uid,
+          email.folder,
+          email.from,
+          email.fromEmail,
+          email.subject,
+          email.date.millisecondsSinceEpoch,
+          email.preview,
+          email.isRead ? 1 : 0,
+        ],
       );
     }
     await batch.commit(noResult: true);
+  }
+
+  // --- Body cache ----------------------------------------------------------
+
+  Future<void> saveBody(
+      String folder, int uid, String body, {required bool isHtml}) async {
+    final db = await _database();
+    await db.update(
+      'emails',
+      {'body': body, 'bodyIsHtml': isHtml ? 1 : 0},
+      where: 'folder = ? AND uid = ?',
+      whereArgs: [folder, uid],
+    );
+  }
+
+  /// Returns the cached body and its HTML-ness, or null if never fetched.
+  Future<(String, bool)?> loadBody(String folder, int uid) async {
+    final db = await _database();
+    final rows = await db.query(
+      'emails',
+      columns: ['body', 'bodyIsHtml'],
+      where: 'folder = ? AND uid = ?',
+      whereArgs: [folder, uid],
+    );
+    if (rows.isEmpty) return null;
+    final body = rows.first['body'] as String?;
+    if (body == null) return null;
+    return (body, (rows.first['bodyIsHtml'] as int?) == 1);
   }
 
   Future<List<Email>> loadEmails(String folder) async {
@@ -204,6 +266,7 @@ class StorageService {
       uid: row['uid']! as int,
       folder: row['folder']! as String,
       from: row['from']! as String,
+      fromEmail: (row['fromEmail'] as String?) ?? '',
       subject: row['subject']! as String,
       date: DateTime.fromMillisecondsSinceEpoch(row['date']! as int),
       preview: row['preview']! as String,

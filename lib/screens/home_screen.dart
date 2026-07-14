@@ -22,6 +22,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   Email? _selected;
   String? _selectedBody;
+  bool _selectedBodyIsHtml = false;
 
   @override
   void initState() {
@@ -42,19 +43,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     setState(() {
       _selected = email;
       _selectedBody = null;
+      _selectedBodyIsHtml = false;
     });
 
     try {
       // Body first — it's what the user is waiting for; the read-flag
       // push happens afterwards on the same connection.
-      final body =
+      final (body, isHtml) =
           await ref.read(emailListProvider.notifier).fetchBody(email);
       if (mounted && _selected?.uid == email.uid) {
-        setState(() => _selectedBody = body);
+        setState(() {
+          _selectedBody = body;
+          _selectedBodyIsHtml = isHtml;
+        });
       }
     } catch (e) {
       if (mounted && _selected?.uid == email.uid) {
-        setState(() => _selectedBody = 'Erreur de chargement : $e');
+        setState(() {
+          _selectedBody = 'Erreur de chargement : $e';
+          _selectedBodyIsHtml = false;
+        });
       }
     }
 
@@ -62,6 +70,35 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       await ref.read(emailListProvider.notifier).markRead(email.uid, true);
     }
   }
+
+  /// Optimistic delete: the list updates instantly; a SnackBar reports a
+  /// server failure (the email is restored by the provider).
+  Future<void> _deleteEmail(Email email) async {
+    if (_selected?.uid == email.uid) {
+      setState(() => _selected = null);
+    }
+    try {
+      await ref.read(emailListProvider.notifier).deleteEmail(email.uid);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Échec de la suppression — email restauré ($e)'),
+          ),
+        );
+      }
+    }
+  }
+
+  void _replyTo(Email email) => _openCompose(
+        to: email.fromEmail.isNotEmpty ? email.fromEmail : email.from,
+        subject: 'Re: ${email.subject}',
+      );
+
+  void _forward(Email email, {String body = ''}) => _openCompose(
+        subject: 'Fwd: ${email.subject}',
+        body: body,
+      );
 
   void _openCompose({String to = '', String subject = '', String body = ''}) {
     showDialog<bool>(
@@ -199,6 +236,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 email: email,
                 selected: _selected?.uid == email.uid,
                 onTap: () => _openEmail(email),
+                onReply: () => _replyTo(email),
+                onForward: () => _forward(email),
+                onToggleRead: () => ref
+                    .read(emailListProvider.notifier)
+                    .markRead(email.uid, !email.isRead),
+                onDelete: () => _deleteEmail(email),
               );
             },
           ),
@@ -218,28 +261,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return EmailReader(
       email: selected,
       body: _selectedBody,
-      onReply: () => _openCompose(
-        to: selected.from,
-        subject: 'Re: ${selected.subject}',
+      bodyIsHtml: _selectedBodyIsHtml,
+      onReply: () => _replyTo(selected),
+      onForward: () => _forward(
+        selected,
+        body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''),
       ),
-      onForward: () => _openCompose(
-        subject: 'Fwd: ${selected.subject}',
-        body: _selectedBody ?? '',
-      ),
-      onDelete: () async {
-        try {
-          await ref
-              .read(emailListProvider.notifier)
-              .deleteEmail(selected.uid);
-          setState(() => _selected = null);
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Échec de la suppression : $e')),
-            );
-          }
-        }
-      },
+      onDelete: () => _deleteEmail(selected),
       onToggleRead: () async {
         await ref
             .read(emailListProvider.notifier)

@@ -11,7 +11,12 @@ abstract class Email with _$Email {
     /// IMAP UID within [folder].
     required int uid,
     required String folder,
+
+    /// Display name of the sender (falls back to the address).
     required String from,
+
+    /// Bare address of the sender, used for replies.
+    @Default('') String fromEmail,
     required String subject,
     required DateTime date,
 

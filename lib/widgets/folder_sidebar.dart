@@ -7,6 +7,11 @@ import '../providers/folder_provider.dart';
 import '../theme.dart';
 
 /// Dark ProtonMail-style sidebar: compose button, folder list, settings.
+///
+/// Each system role (inbox, sent, trash…) is assigned to at most ONE
+/// folder — an account can hold both the server's `trash` and a custom
+/// `Trash` folder; only the system one gets the French label, the other
+/// keeps its own name so the two stay distinguishable.
 class FolderSidebar extends ConsumerWidget {
   const FolderSidebar({
     super.key,
@@ -21,30 +26,54 @@ class FolderSidebar extends ConsumerWidget {
   /// Called after a folder tap (used to close the drawer on mobile).
   final VoidCallback? onFolderSelected;
 
-  static (IconData, String) _iconAndLabel(Folder folder) {
-    final name = folder.name.toLowerCase();
-    final path = folder.path.toLowerCase();
-    if (path == 'inbox') return (Icons.inbox_rounded, 'Boîte de réception');
-    if (name.contains('sent') || name.contains('envoy')) {
-      return (Icons.send_rounded, 'Envoyés');
+  static String? _findRole(List<Folder> folders, List<String> keywords,
+      Set<String> claimed) {
+    // Exact lowercase path match first (server system folders), then
+    // name heuristics (Gmail-style "[Gmail]/Sent Mail").
+    for (final folder in folders) {
+      if (claimed.contains(folder.path)) continue;
+      if (keywords.contains(folder.path.toLowerCase())) return folder.path;
     }
-    if (name.contains('draft') || name.contains('brouillon')) {
-      return (Icons.edit_note_rounded, 'Brouillons');
+    for (final folder in folders) {
+      if (claimed.contains(folder.path)) continue;
+      final name = folder.name.toLowerCase();
+      if (keywords.any(name.contains)) return folder.path;
     }
-    if (name.contains('trash') ||
-        name.contains('corbeille') ||
-        name.contains('deleted')) {
-      return (Icons.delete_outline_rounded, 'Corbeille');
+    return null;
+  }
+
+  /// path → (icon, label, rank) for system folders.
+  static Map<String, (IconData, String, int)> _systemRoles(
+      List<Folder> folders) {
+    final result = <String, (IconData, String, int)>{};
+    final claimed = <String>{};
+
+    void assign(String? path, IconData icon, String label, int rank) {
+      if (path == null) return;
+      result[path] = (icon, label, rank);
+      claimed.add(path);
     }
-    if (name.contains('spam') ||
-        name.contains('junk') ||
-        name.contains('indésirable')) {
-      return (Icons.report_gmailerrorred_rounded, 'Indésirables');
-    }
-    if (name.contains('archive')) {
-      return (Icons.archive_outlined, 'Archive');
-    }
-    return (Icons.folder_outlined, folder.name);
+
+    assign(
+      folders
+          .where((f) => f.path.toUpperCase() == 'INBOX')
+          .firstOrNull
+          ?.path,
+      Icons.inbox_rounded,
+      'Boîte de réception',
+      0,
+    );
+    claimed.addAll(result.keys);
+    assign(_findRole(folders, ['draftbox', 'drafts', 'draft', 'brouillon'], claimed),
+        Icons.edit_note_rounded, 'Brouillons', 1);
+    assign(_findRole(folders, ['sent', 'envoy'], claimed),
+        Icons.send_rounded, 'Envoyés', 2);
+    assign(_findRole(folders, ['unsolbox', 'spam', 'junk', 'indésirable'], claimed),
+        Icons.report_gmailerrorred_rounded, 'Indésirables', 3);
+    assign(findTrashPath(folders), Icons.delete_outline_rounded, 'Corbeille', 4);
+    assign(_findRole(folders, ['archive'], claimed),
+        Icons.archive_outlined, 'Archive', 5);
+    return result;
   }
 
   @override
@@ -98,23 +127,56 @@ class FolderSidebar extends ConsumerWidget {
                   onRetry: () =>
                       ref.read(folderListProvider.notifier).refresh(),
                 ),
-                data: (folders) => ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  children: [
-                    for (final folder in folders)
-                      _FolderTile(
-                        folder: folder,
-                        selected: folder.path == currentFolder,
-                        onTap: () {
-                          ref
-                              .read(currentFolderProvider.notifier)
-                              .select(folder.path);
-                          ref.read(emailListProvider.notifier).sync();
-                          onFolderSelected?.call();
-                        },
-                      ),
-                  ],
-                ),
+                data: (folders) {
+                  final roles = _systemRoles(folders);
+                  final system = folders
+                      .where((f) => roles.containsKey(f.path))
+                      .toList()
+                    ..sort((a, b) =>
+                        roles[a.path]!.$3.compareTo(roles[b.path]!.$3));
+                  final custom = folders
+                      .where((f) => !roles.containsKey(f.path))
+                      .toList()
+                    ..sort((a, b) => a.name
+                        .toLowerCase()
+                        .compareTo(b.name.toLowerCase()));
+
+                  return ListView(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    children: [
+                      for (final folder in system)
+                        _FolderTile(
+                          folder: folder,
+                          icon: roles[folder.path]!.$1,
+                          label: roles[folder.path]!.$2,
+                          selected: folder.path == currentFolder,
+                          onTap: () => _selectFolder(ref, folder.path),
+                        ),
+                      if (custom.isNotEmpty) ...[
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(12, 16, 12, 6),
+                          child: Text(
+                            'DOSSIERS',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 10.5,
+                              letterSpacing: 1.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        for (final folder in custom)
+                          _FolderTile(
+                            folder: folder,
+                            icon: Icons.folder_outlined,
+                            label: folder.name,
+                            selected: folder.path == currentFolder,
+                            onTap: () => _selectFolder(ref, folder.path),
+                          ),
+                      ],
+                    ],
+                  );
+                },
               ),
             ),
             const Divider(color: Colors.white12),
@@ -134,22 +196,31 @@ class FolderSidebar extends ConsumerWidget {
       ),
     );
   }
+
+  void _selectFolder(WidgetRef ref, String path) {
+    ref.read(currentFolderProvider.notifier).select(path);
+    ref.read(emailListProvider.notifier).sync();
+    onFolderSelected?.call();
+  }
 }
 
 class _FolderTile extends StatelessWidget {
   const _FolderTile({
     required this.folder,
+    required this.icon,
+    required this.label,
     required this.selected,
     required this.onTap,
   });
 
   final Folder folder;
+  final IconData icon;
+  final String label;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final (icon, label) = FolderSidebar._iconAndLabel(folder);
     final color =
         selected ? AppColors.sidebarTextSelected : AppColors.sidebarText;
     final read = folder.total - folder.unread;

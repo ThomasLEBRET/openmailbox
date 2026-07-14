@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_html/flutter_html.dart';
+import 'package:flutter_linkify/flutter_linkify.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/email.dart';
 import '../theme.dart';
@@ -8,6 +11,7 @@ class EmailReader extends StatelessWidget {
     super.key,
     required this.email,
     required this.body,
+    required this.bodyIsHtml,
     required this.onReply,
     required this.onForward,
     required this.onDelete,
@@ -16,10 +20,18 @@ class EmailReader extends StatelessWidget {
 
   final Email email;
   final String? body;
+  final bool bodyIsHtml;
   final VoidCallback onReply;
   final VoidCallback onForward;
   final VoidCallback onDelete;
   final VoidCallback onToggleRead;
+
+  static Future<void> _openLink(String? url) async {
+    if (url == null || url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +73,10 @@ class EmailReader extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          sender,
+                          email.fromEmail.isNotEmpty &&
+                                  email.fromEmail != sender
+                              ? '$sender <${email.fromEmail}>'
+                              : sender,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -79,32 +94,41 @@ class EmailReader extends StatelessWidget {
                       ],
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Répondre',
-                    icon: const Icon(Icons.reply_rounded, size: 20),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.tonalIcon(
                     onPressed: onReply,
+                    icon: const Icon(Icons.reply_rounded, size: 18),
+                    label: const Text('Répondre'),
                   ),
-                  IconButton(
-                    tooltip: 'Transférer',
-                    icon: const Icon(Icons.forward_rounded, size: 20),
+                  OutlinedButton.icon(
                     onPressed: onForward,
+                    icon: const Icon(Icons.forward_rounded, size: 18),
+                    label: const Text('Transférer'),
                   ),
-                  IconButton(
-                    tooltip:
-                        email.isRead ? 'Marquer non lu' : 'Marquer lu',
+                  OutlinedButton.icon(
+                    onPressed: onToggleRead,
                     icon: Icon(
                       email.isRead
                           ? Icons.mark_email_unread_outlined
                           : Icons.mark_email_read_outlined,
-                      size: 20,
+                      size: 18,
                     ),
-                    onPressed: onToggleRead,
+                    label: Text(email.isRead ? 'Non lu' : 'Lu'),
                   ),
-                  IconButton(
-                    tooltip: 'Supprimer',
-                    icon: Icon(Icons.delete_outline_rounded,
-                        size: 20, color: scheme.error),
+                  FilledButton.tonalIcon(
                     onPressed: onDelete,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: scheme.errorContainer,
+                      foregroundColor: scheme.onErrorContainer,
+                    ),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('Supprimer'),
                   ),
                 ],
               ),
@@ -113,18 +137,36 @@ class EmailReader extends StatelessWidget {
           ),
         ),
         const Divider(),
-        Expanded(
-          child: body == null
-              ? const Center(child: CircularProgressIndicator())
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(24),
-                  child: SelectableText(
-                    body!,
-                    style: const TextStyle(fontSize: 14, height: 1.6),
-                  ),
-                ),
-        ),
+        Expanded(child: _buildBody(context)),
       ],
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    final content = body;
+    if (content == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (bodyIsHtml) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Html(
+          data: content,
+          onLinkTap: (url, _, _) => _openLink(url),
+        ),
+      );
+    }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: SelectableLinkify(
+        text: content,
+        onOpen: (link) => _openLink(link.url),
+        style: const TextStyle(fontSize: 14, height: 1.6),
+        linkStyle: const TextStyle(
+          color: AppColors.primary,
+          decoration: TextDecoration.none,
+        ),
+      ),
     );
   }
 }

@@ -36,7 +36,10 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
       state = await AsyncValue.guard(() async {
         final emails = await withImapSession(
             ref, (imap) => imap.fetchRecentMessages(folder));
-        await ref.read(storageServiceProvider).saveEmails(emails);
+        emails.sort((a, b) => b.date.compareTo(a.date));
+        await ref
+            .read(storageServiceProvider)
+            .replaceFolderEmails(folder, emails);
         return emails;
       });
     } finally {
@@ -44,13 +47,21 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     }
   }
 
-  /// Fetches the readable text of one email for the reader panel.
-  Future<String> fetchBody(Email email) async {
+  /// Returns the readable body of one email and whether it is HTML.
+  /// Bodies are cached in SQLite: re-opening an email is instant.
+  Future<(String, bool)> fetchBody(Email email) async {
+    final storage = ref.read(storageServiceProvider);
+    final cached = await storage.loadBody(email.folder, email.uid);
+    if (cached != null) return cached;
+
     final message = await withImapSession(
         ref, (imap) => imap.fetchMessageText(email.folder, email.uid));
-    return message.decodeTextPlainPart() ??
-        message.decodeTextHtmlPart() ??
-        '(corps vide)';
+    final html = message.decodeTextHtmlPart();
+    final (body, isHtml) = html != null
+        ? (html, true)
+        : (message.decodeTextPlainPart() ?? '(corps vide)', false);
+    await storage.saveBody(email.folder, email.uid, body, isHtml: isHtml);
+    return (body, isHtml);
   }
 
   /// Marks locally (snappy UI), then pushes the \Seen flag to the server
@@ -83,34 +94,26 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   }
 
   /// Moves the email to the trash folder (or deletes permanently when
-  /// already in the trash). Server-first: throws on failure so the caller
-  /// can surface it. Both folders' counts are adjusted locally.
+  /// already in the trash). Optimistic: the email leaves the list and the
+  /// counts shift immediately; if the server call then fails, everything
+  /// is restored and the error rethrown for the caller to surface.
   Future<void> deleteEmail(int uid) async {
     final folder = ref.read(currentFolderProvider);
     final storage = ref.read(storageServiceProvider);
-    final wasUnread = state.value
-            ?.where((email) => email.uid == uid)
-            .firstOrNull
-            ?.isRead ==
-        false;
+    final emails = state.value ?? const <Email>[];
+    final removed = emails.where((email) => email.uid == uid).firstOrNull;
+    if (removed == null) return;
+    final wasUnread = !removed.isRead;
 
     final folders = ref.read(folderListProvider).value ?? const [];
     final trashPath = findTrashPath(folders);
     final movesToTrash = trashPath != null && folder != trashPath;
-
-    if (movesToTrash) {
-      await withImapSession(
-          ref, (imap) => imap.moveToTrash(folder, uid, trashPath));
-    } else {
-      await withImapSession(ref, (imap) => imap.deleteMessage(folder, uid));
-    }
-
-    await storage.deleteEmail(folder, uid);
-    state = state.whenData(
-      (emails) => emails.where((email) => email.uid != uid).toList(),
-    );
-
     final folderNotifier = ref.read(folderListProvider.notifier);
+
+    // Optimistic local removal.
+    state = AsyncData(
+        emails.where((email) => email.uid != uid).toList(growable: false));
+    await storage.deleteEmail(folder, uid);
     await folderNotifier.adjustCounts(
       folder,
       totalDelta: -1,
@@ -122,6 +125,36 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
         totalDelta: 1,
         unreadDelta: wasUnread ? 1 : 0,
       );
+    }
+
+    try {
+      if (movesToTrash) {
+        await withImapSession(
+            ref, (imap) => imap.moveToTrash(folder, uid, trashPath));
+      } else {
+        await withImapSession(
+            ref, (imap) => imap.deleteMessage(folder, uid));
+      }
+    } catch (_) {
+      // Roll back: restore the email and the counts.
+      final current = state.value ?? const <Email>[];
+      final restored = [...current, removed]
+        ..sort((a, b) => b.date.compareTo(a.date));
+      state = AsyncData(restored);
+      await storage.replaceFolderEmails(folder, restored);
+      await folderNotifier.adjustCounts(
+        folder,
+        totalDelta: 1,
+        unreadDelta: wasUnread ? 1 : 0,
+      );
+      if (movesToTrash) {
+        await folderNotifier.adjustCounts(
+          trashPath,
+          totalDelta: -1,
+          unreadDelta: wasUnread ? -1 : 0,
+        );
+      }
+      rethrow;
     }
   }
 }

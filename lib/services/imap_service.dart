@@ -207,15 +207,19 @@ class ImapService {
     return result.messages.map((message) {
       final envelope = message.envelope;
       final fromAddresses = envelope?.from ?? message.from;
-      final from = (fromAddresses != null && fromAddresses.isNotEmpty)
-          ? (fromAddresses.first.personalName?.isNotEmpty ?? false
-              ? fromAddresses.first.personalName!
-              : fromAddresses.first.email)
-          : '';
+      final sender = (fromAddresses != null && fromAddresses.isNotEmpty)
+          ? fromAddresses.first
+          : null;
+      final from = sender == null
+          ? ''
+          : (sender.personalName?.isNotEmpty ?? false)
+              ? sender.personalName!
+              : sender.email;
       return Email(
         uid: message.uid ?? message.sequenceId ?? 0,
         folder: folderPath,
         from: from,
+        fromEmail: sender?.email ?? '',
         subject: envelope?.subject ?? message.decodeSubject() ?? '(sans sujet)',
         date: envelope?.date ?? message.decodeDate() ?? DateTime.now(),
         preview: '',
@@ -241,8 +245,10 @@ class ImapService {
     }
     final message = structureResult.messages.first;
     final body = message.body;
-    final textPart = body?.findFirst(MediaSubtype.textPlain) ??
-        body?.findFirst(MediaSubtype.textHtml);
+    // HTML first: it's the authored version of most emails and the
+    // reader renders it; plain text is the fallback.
+    final textPart = body?.findFirst(MediaSubtype.textHtml) ??
+        body?.findFirst(MediaSubtype.textPlain);
     final fetchId = textPart?.fetchId;
 
     if (body == null || fetchId == null) {
