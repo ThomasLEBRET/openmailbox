@@ -19,11 +19,20 @@ final emailSyncingProvider =
 
 /// Email list for the currently selected folder ([currentFolderProvider]).
 class EmailListNotifier extends AsyncNotifier<List<Email>> {
+  /// The active account id, or throws before setup.
+  String get _accountId {
+    final account = ref.read(currentAccountProvider);
+    if (account == null) throw StateError('Aucun compte configuré');
+    return account.id;
+  }
+
   @override
   Future<List<Email>> build() async {
+    final account = ref.watch(currentAccountProvider);
     final folder = ref.watch(currentFolderProvider);
+    if (account == null) return const [];
     final storage = ref.read(storageServiceProvider);
-    return storage.loadEmails(folder);
+    return storage.loadEmails(account.id, folder);
   }
 
   /// Pulls the latest messages for the current folder and refreshes the
@@ -32,6 +41,7 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   Future<void> sync() async {
     ref.read(emailSyncingProvider.notifier).set(true);
     try {
+      final accountId = _accountId;
       final folder = ref.read(currentFolderProvider);
       final result = await AsyncValue.guard(() async {
         final emails = await withImapSession(
@@ -39,12 +49,13 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
         emails.sort((a, b) => b.date.compareTo(a.date));
         await ref
             .read(storageServiceProvider)
-            .replaceFolderEmails(folder, emails);
+            .replaceFolderEmails(accountId, folder, emails);
         return emails;
       });
-      // The user may have switched folders while this sync ran — a stale
-      // result must not overwrite the newly selected folder's list.
-      if (ref.read(currentFolderProvider) == folder) {
+      // The user may have switched folder or account while this sync ran —
+      // a stale result must not overwrite the current list.
+      if (ref.read(currentFolderProvider) == folder &&
+          ref.read(currentAccountProvider)?.id == accountId) {
         state = result;
       }
     } finally {
@@ -62,13 +73,15 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   /// Returns the readable body of one email and whether it is HTML.
   /// Bodies are cached in SQLite: re-opening an email is instant.
   Future<(String, bool)> fetchBody(Email email) async {
+    final accountId = _accountId;
     final storage = ref.read(storageServiceProvider);
-    final cached = await storage.loadBody(email.folder, email.uid);
+    final cached = await storage.loadBody(accountId, email.folder, email.uid);
     if (cached != null) {
       final (body, isHtml) = cached;
       if (!isHtml && _looksLikeHtml(body)) {
         // Heal rows cached with a wrong flag by earlier versions.
-        await storage.saveBody(email.folder, email.uid, body, isHtml: true);
+        await storage.saveBody(accountId, email.folder, email.uid, body,
+            isHtml: true);
         return (body, true);
       }
       return cached;
@@ -96,20 +109,22 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
         isHtml = _looksLikeHtml(body);
       }
     }
-    await storage.saveBody(email.folder, email.uid, body, isHtml: isHtml);
+    await storage.saveBody(accountId, email.folder, email.uid, body,
+        isHtml: isHtml);
     return (body, isHtml);
   }
 
   /// Marks locally (snappy UI), then pushes the \Seen flag to the server
   /// best-effort — the next sync reconciles if it fails.
   Future<void> markRead(int uid, bool isRead) async {
+    final accountId = _accountId;
     final folder = ref.read(currentFolderProvider);
     final storage = ref.read(storageServiceProvider);
     final previous = state.value
         ?.where((email) => email.uid == uid)
         .firstOrNull
         ?.isRead;
-    await storage.setRead(folder, uid, isRead);
+    await storage.setRead(accountId, folder, uid, isRead);
     state = state.whenData(
       (emails) => [
         for (final email in emails)
@@ -137,6 +152,7 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   /// Returns true when the email was moved to the trash, false when it
   /// was permanently deleted.
   Future<bool> deleteEmail(int uid) async {
+    final accountId = _accountId;
     final folder = ref.read(currentFolderProvider);
     final storage = ref.read(storageServiceProvider);
     final emails = state.value ?? const <Email>[];
@@ -152,7 +168,7 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     // Optimistic local removal.
     state = AsyncData(
         emails.where((email) => email.uid != uid).toList(growable: false));
-    await storage.deleteEmail(folder, uid);
+    await storage.deleteEmail(accountId, folder, uid);
     await folderNotifier.adjustCounts(
       folder,
       totalDelta: -1,
@@ -180,7 +196,7 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
       final restored = [...current, removed]
         ..sort((a, b) => b.date.compareTo(a.date));
       state = AsyncData(restored);
-      await storage.replaceFolderEmails(folder, restored);
+      await storage.replaceFolderEmails(accountId, folder, restored);
       await folderNotifier.adjustCounts(
         folder,
         totalDelta: 1,

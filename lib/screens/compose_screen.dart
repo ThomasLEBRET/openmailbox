@@ -104,8 +104,9 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
 
   Future<void> _send() async {
     if (!_formKey.currentState!.validate()) return;
-    final config = ref.read(accountConfigProvider).value;
-    if (config == null) return;
+    final account = ref.read(currentAccountProvider);
+    if (account == null) return;
+    final config = account.config;
 
     setState(() {
       _isSending = true;
@@ -114,7 +115,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
     final smtp = SmtpService();
     try {
       final storage = ref.read(storageServiceProvider);
-      final password = await storage.readSmtpPassword();
+      final password = await storage.readSmtpPassword(account.id);
       if (password == null) {
         throw StateError('Mot de passe SMTP introuvable');
       }

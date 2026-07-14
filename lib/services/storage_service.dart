@@ -6,73 +6,97 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../models/account.dart';
 import '../models/config.dart';
 import '../models/email.dart';
 import '../models/folder.dart';
 
 /// Persists everything the app needs locally:
-/// - account credentials, in encrypted secure storage (never logged/exported)
-/// - non-secret connection settings, as a local JSON file
-/// - email metadata and folder list, in SQLite (bodies are fetched on demand)
+/// - per-account credentials, in encrypted secure storage (never logged)
+/// - the account list + active account, as a local JSON file
+/// - email metadata, bodies and folder lists in SQLite, scoped by account
 class StorageService {
   StorageService({FlutterSecureStorage? secureStorage})
       : _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
-  static const _imapPasswordKey = 'imap_password';
-  static const _smtpPasswordKey = 'smtp_password';
-  static const _configFileName = 'account_config.json';
+  static const _accountsFileName = 'accounts.json';
+  static const _legacyConfigFileName = 'account_config.json';
+  static const _legacyAccountId = 'default';
 
   final FlutterSecureStorage _secureStorage;
   Database? _db;
 
-  // --- Credentials (secure storage) ---------------------------------------
+  // --- Credentials (secure storage, one pair of keys per account) ---------
 
-  Future<void> saveCredentials({
+  Future<void> saveCredentials(
+    String accountId, {
     required String imapPassword,
     required String smtpPassword,
   }) async {
-    await _secureStorage.write(key: _imapPasswordKey, value: imapPassword);
-    await _secureStorage.write(key: _smtpPasswordKey, value: smtpPassword);
+    await _secureStorage.write(
+        key: 'imap_password_$accountId', value: imapPassword);
+    await _secureStorage.write(
+        key: 'smtp_password_$accountId', value: smtpPassword);
   }
 
-  Future<String?> readImapPassword() =>
-      _secureStorage.read(key: _imapPasswordKey);
+  Future<String?> readImapPassword(String accountId) =>
+      _secureStorage.read(key: 'imap_password_$accountId');
 
-  Future<String?> readSmtpPassword() =>
-      _secureStorage.read(key: _smtpPasswordKey);
+  Future<String?> readSmtpPassword(String accountId) =>
+      _secureStorage.read(key: 'smtp_password_$accountId');
 
-  Future<void> clearCredentials() async {
-    await _secureStorage.delete(key: _imapPasswordKey);
-    await _secureStorage.delete(key: _smtpPasswordKey);
+  Future<void> clearCredentials(String accountId) async {
+    await _secureStorage.delete(key: 'imap_password_$accountId');
+    await _secureStorage.delete(key: 'smtp_password_$accountId');
   }
 
-  // --- Non-secret config (local JSON file) --------------------------------
+  // --- Accounts file (non-secret) ------------------------------------------
 
-  Future<File> _configFile() async {
+  Future<File> _fileIn(String name) async {
     final dir = await getApplicationSupportDirectory();
-    return File(p.join(dir.path, _configFileName));
+    return File(p.join(dir.path, name));
   }
 
-  Future<void> saveAccountConfig(MailAccountConfig config) async {
-    final file = await _configFile();
-    await file.writeAsString(jsonEncode(config.toJson()));
+  Future<void> saveAccounts(AccountsState state) async {
+    final file = await _fileIn(_accountsFileName);
+    await file.writeAsString(jsonEncode(state.toJson()));
   }
 
-  Future<MailAccountConfig?> loadAccountConfig() async {
-    final file = await _configFile();
-    if (!file.existsSync()) return null;
-    final content = await file.readAsString();
-    return MailAccountConfig.fromJson(
-      jsonDecode(content) as Map<String, dynamic>,
+  /// Loads the account list, migrating the single-account layout
+  /// (account_config.json + un-suffixed keychain keys) if present.
+  Future<AccountsState> loadAccounts() async {
+    final file = await _fileIn(_accountsFileName);
+    if (file.existsSync()) {
+      return AccountsState.fromJson(
+        jsonDecode(await file.readAsString()) as Map<String, dynamic>,
+      );
+    }
+
+    final legacy = await _fileIn(_legacyConfigFileName);
+    if (!legacy.existsSync()) return const AccountsState();
+
+    final config = MailAccountConfig.fromJson(
+      jsonDecode(await legacy.readAsString()) as Map<String, dynamic>,
     );
+    final state = AccountsState(
+      accounts: [MailAccount(id: _legacyAccountId, config: config)],
+      currentId: _legacyAccountId,
+    );
+    // Move the legacy (un-suffixed) keychain entries to the new keys.
+    final imap = await _secureStorage.read(key: 'imap_password');
+    final smtp = await _secureStorage.read(key: 'smtp_password');
+    if (imap != null && smtp != null) {
+      await saveCredentials(_legacyAccountId,
+          imapPassword: imap, smtpPassword: smtp);
+      await _secureStorage.delete(key: 'imap_password');
+      await _secureStorage.delete(key: 'smtp_password');
+    }
+    await saveAccounts(state);
+    await legacy.delete();
+    return state;
   }
 
-  Future<void> clearAccountConfig() async {
-    final file = await _configFile();
-    if (file.existsSync()) await file.delete();
-  }
-
-  // --- SQLite: email metadata + folders -----------------------------------
+  // --- SQLite: email metadata + folders, scoped by account -----------------
 
   Future<Database> _database() async {
     final existing = _db;
@@ -82,51 +106,20 @@ class StorageService {
     final dbPath = p.join(dir.path, 'openmailbox.db');
     final db = await openDatabase(
       dbPath,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE emails (
-            uid INTEGER NOT NULL,
-            folder TEXT NOT NULL,
-            "from" TEXT NOT NULL,
-            fromEmail TEXT NOT NULL DEFAULT '',
-            subject TEXT NOT NULL,
-            date INTEGER NOT NULL,
-            preview TEXT NOT NULL,
-            isRead INTEGER NOT NULL,
-            body TEXT,
-            bodyIsHtml INTEGER,
-            PRIMARY KEY (uid, folder)
-          )
-        ''');
+        await db.execute(_createEmailsTable);
         await db.execute(_createFoldersTable);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          // v2 added total/unread counts; the table is a pure cache,
-          // safe to rebuild from the next sync.
+        if (oldVersion < 4) {
+          // v4 scopes both tables by account, which changes their primary
+          // keys — SQLite can't alter PKs, and these are pure caches, so
+          // rebuild them (they refill on the next sync).
+          await db.execute('DROP TABLE IF EXISTS emails');
           await db.execute('DROP TABLE IF EXISTS folders');
+          await db.execute(_createEmailsTable);
           await db.execute(_createFoldersTable);
-        }
-        if (oldVersion < 3) {
-          // v3 caches fetched message bodies for instant re-opening and
-          // stores the sender's bare address for replies. Idempotent: a
-          // partially applied run (e.g. two app instances migrating at
-          // once) must not fail forever on "duplicate column".
-          final columns = (await db.rawQuery('PRAGMA table_info(emails)'))
-              .map((row) => row['name'] as String)
-              .toSet();
-          if (!columns.contains('body')) {
-            await db.execute('ALTER TABLE emails ADD COLUMN body TEXT');
-          }
-          if (!columns.contains('bodyIsHtml')) {
-            await db
-                .execute('ALTER TABLE emails ADD COLUMN bodyIsHtml INTEGER');
-          }
-          if (!columns.contains('fromEmail')) {
-            await db.execute(
-                "ALTER TABLE emails ADD COLUMN fromEmail TEXT NOT NULL DEFAULT ''");
-          }
         }
       },
     );
@@ -134,21 +127,41 @@ class StorageService {
     return db;
   }
 
-  static const _createFoldersTable = '''
-    CREATE TABLE folders (
-      path TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      total INTEGER NOT NULL DEFAULT 0,
-      unread INTEGER NOT NULL DEFAULT 0
+  static const _createEmailsTable = '''
+    CREATE TABLE emails (
+      account TEXT NOT NULL,
+      uid INTEGER NOT NULL,
+      folder TEXT NOT NULL,
+      "from" TEXT NOT NULL,
+      fromEmail TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL,
+      date INTEGER NOT NULL,
+      preview TEXT NOT NULL,
+      isRead INTEGER NOT NULL,
+      body TEXT,
+      bodyIsHtml INTEGER,
+      PRIMARY KEY (account, folder, uid)
     )
   ''';
 
-  Future<void> saveFolders(List<Folder> folders) async {
+  static const _createFoldersTable = '''
+    CREATE TABLE folders (
+      account TEXT NOT NULL,
+      path TEXT NOT NULL,
+      name TEXT NOT NULL,
+      total INTEGER NOT NULL DEFAULT 0,
+      unread INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (account, path)
+    )
+  ''';
+
+  Future<void> saveFolders(String accountId, List<Folder> folders) async {
     final db = await _database();
     final batch = db.batch();
-    batch.delete('folders');
+    batch.delete('folders', where: 'account = ?', whereArgs: [accountId]);
     for (final folder in folders) {
       batch.insert('folders', {
+        'account': accountId,
         'path': folder.path,
         'name': folder.name,
         'total': folder.total,
@@ -158,9 +171,10 @@ class StorageService {
     await batch.commit(noResult: true);
   }
 
-  Future<List<Folder>> loadFolders() async {
+  Future<List<Folder>> loadFolders(String accountId) async {
     final db = await _database();
-    final rows = await db.query('folders');
+    final rows = await db
+        .query('folders', where: 'account = ?', whereArgs: [accountId]);
     return rows.map((row) {
       return Folder(
         name: row['name']! as String,
@@ -171,28 +185,30 @@ class StorageService {
     }).toList();
   }
 
-  /// Replaces the cached list of [folder] with [emails]: metadata is
-  /// upserted (cached bodies survive) and rows no longer on the server
-  /// are removed.
-  Future<void> replaceFolderEmails(String folder, List<Email> emails) async {
+  /// Replaces the cached list of [folder]: metadata is upserted (cached
+  /// bodies survive) and rows no longer on the server are removed.
+  Future<void> replaceFolderEmails(
+      String accountId, String folder, List<Email> emails) async {
     final db = await _database();
     final batch = db.batch();
     if (emails.isEmpty) {
-      batch.delete('emails', where: 'folder = ?', whereArgs: [folder]);
+      batch.delete('emails',
+          where: 'account = ? AND folder = ?', whereArgs: [accountId, folder]);
     } else {
       final uids = emails.map((e) => e.uid).join(',');
       batch.rawDelete(
-        'DELETE FROM emails WHERE folder = ? AND uid NOT IN ($uids)',
-        [folder],
+        'DELETE FROM emails WHERE account = ? AND folder = ? '
+        'AND uid NOT IN ($uids)',
+        [accountId, folder],
       );
     }
     for (final email in emails) {
       batch.rawInsert(
         '''
         INSERT INTO emails
-          (uid, folder, "from", fromEmail, subject, date, preview, isRead)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(uid, folder) DO UPDATE SET
+          (account, uid, folder, "from", fromEmail, subject, date, preview, isRead)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account, folder, uid) DO UPDATE SET
           "from" = excluded."from",
           fromEmail = excluded.fromEmail,
           subject = excluded.subject,
@@ -201,6 +217,7 @@ class StorageService {
           isRead = excluded.isRead
         ''',
         [
+          accountId,
           email.uid,
           email.folder,
           email.from,
@@ -215,62 +232,71 @@ class StorageService {
     await batch.commit(noResult: true);
   }
 
-  // --- Body cache ----------------------------------------------------------
-
-  Future<void> saveBody(
-      String folder, int uid, String body, {required bool isHtml}) async {
-    final db = await _database();
-    await db.update(
-      'emails',
-      {'body': body, 'bodyIsHtml': isHtml ? 1 : 0},
-      where: 'folder = ? AND uid = ?',
-      whereArgs: [folder, uid],
-    );
-  }
-
-  /// Returns the cached body and its HTML-ness, or null if never fetched.
-  Future<(String, bool)?> loadBody(String folder, int uid) async {
+  Future<List<Email>> loadEmails(String accountId, String folder) async {
     final db = await _database();
     final rows = await db.query(
       'emails',
-      columns: ['body', 'bodyIsHtml'],
-      where: 'folder = ? AND uid = ?',
-      whereArgs: [folder, uid],
-    );
-    if (rows.isEmpty) return null;
-    final body = rows.first['body'] as String?;
-    if (body == null) return null;
-    return (body, (rows.first['bodyIsHtml'] as int?) == 1);
-  }
-
-  Future<List<Email>> loadEmails(String folder) async {
-    final db = await _database();
-    final rows = await db.query(
-      'emails',
-      where: 'folder = ?',
-      whereArgs: [folder],
+      where: 'account = ? AND folder = ?',
+      whereArgs: [accountId, folder],
       orderBy: 'date DESC',
     );
     return rows.map(_emailFromRow).toList();
   }
 
-  Future<void> setRead(String folder, int uid, bool isRead) async {
+  Future<void> setRead(
+      String accountId, String folder, int uid, bool isRead) async {
     final db = await _database();
     await db.update(
       'emails',
       {'isRead': isRead ? 1 : 0},
-      where: 'folder = ? AND uid = ?',
-      whereArgs: [folder, uid],
+      where: 'account = ? AND folder = ? AND uid = ?',
+      whereArgs: [accountId, folder, uid],
     );
   }
 
-  Future<void> deleteEmail(String folder, int uid) async {
+  Future<void> deleteEmail(String accountId, String folder, int uid) async {
     final db = await _database();
     await db.delete(
       'emails',
-      where: 'folder = ? AND uid = ?',
-      whereArgs: [folder, uid],
+      where: 'account = ? AND folder = ? AND uid = ?',
+      whereArgs: [accountId, folder, uid],
     );
+  }
+
+  /// Removes every cached row of a deleted account.
+  Future<void> deleteAccountData(String accountId) async {
+    final db = await _database();
+    await db.delete('emails', where: 'account = ?', whereArgs: [accountId]);
+    await db.delete('folders', where: 'account = ?', whereArgs: [accountId]);
+  }
+
+  // --- Body cache -----------------------------------------------------------
+
+  Future<void> saveBody(String accountId, String folder, int uid, String body,
+      {required bool isHtml}) async {
+    final db = await _database();
+    await db.update(
+      'emails',
+      {'body': body, 'bodyIsHtml': isHtml ? 1 : 0},
+      where: 'account = ? AND folder = ? AND uid = ?',
+      whereArgs: [accountId, folder, uid],
+    );
+  }
+
+  /// Returns the cached body and its HTML-ness, or null if never fetched.
+  Future<(String, bool)?> loadBody(
+      String accountId, String folder, int uid) async {
+    final db = await _database();
+    final rows = await db.query(
+      'emails',
+      columns: ['body', 'bodyIsHtml'],
+      where: 'account = ? AND folder = ? AND uid = ?',
+      whereArgs: [accountId, folder, uid],
+    );
+    if (rows.isEmpty) return null;
+    final body = rows.first['body'] as String?;
+    if (body == null) return null;
+    return (body, (rows.first['bodyIsHtml'] as int?) == 1);
   }
 
   Email _emailFromRow(Map<String, Object?> row) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/folder.dart';
+import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
 import '../theme.dart';
@@ -17,11 +18,13 @@ class FolderSidebar extends ConsumerWidget {
     super.key,
     required this.onCompose,
     required this.onOpenSettings,
+    required this.onAddAccount,
     this.onFolderSelected,
   });
 
   final VoidCallback onCompose;
   final VoidCallback onOpenSettings;
+  final VoidCallback onAddAccount;
 
   /// Called after a folder tap (used to close the drawer on mobile).
   final VoidCallback? onFolderSelected;
@@ -104,6 +107,7 @@ class FolderSidebar extends ConsumerWidget {
                 ],
               ),
             ),
+            _AccountSwitcher(onAddAccount: onAddAccount),
             Padding(
               padding: const EdgeInsets.all(16),
               child: FilledButton.icon(
@@ -201,6 +205,112 @@ class FolderSidebar extends ConsumerWidget {
     ref.read(currentFolderProvider.notifier).select(path);
     ref.read(emailListProvider.notifier).sync();
     onFolderSelected?.call();
+  }
+}
+
+/// Current account chip with a menu to switch or add accounts.
+class _AccountSwitcher extends ConsumerWidget {
+  const _AccountSwitcher({required this.onAddAccount});
+
+  final VoidCallback onAddAccount;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final accountsState = ref.watch(accountsProvider).value;
+    final current = accountsState?.current;
+    if (current == null) return const SizedBox.shrink();
+    final accounts = accountsState!.accounts;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: PopupMenuButton<String>(
+        tooltip: 'Changer de compte',
+        offset: const Offset(0, 42),
+        onSelected: (value) async {
+          if (value == '_add') {
+            onAddAccount();
+            return;
+          }
+          await ref.read(accountsProvider.notifier).switchTo(value);
+          // Fresh data for the newly selected account.
+          ref.read(emailListProvider.notifier).sync();
+          ref.read(folderListProvider.notifier).refresh();
+        },
+        itemBuilder: (context) => [
+          for (final account in accounts)
+            PopupMenuItem(
+              value: account.id,
+              child: Row(
+                children: [
+                  Icon(
+                    account.id == current.id
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    size: 16,
+                    color: account.id == current.id
+                        ? AppColors.primary
+                        : null,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(account.label,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              ),
+            ),
+          const PopupMenuDivider(),
+          const PopupMenuItem(
+            value: '_add',
+            child: Row(
+              children: [
+                Icon(Icons.add, size: 16),
+                SizedBox(width: 8),
+                Text('Ajouter un compte'),
+              ],
+            ),
+          ),
+        ],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 10,
+                backgroundColor: AppColors.avatarColorFor(current.label),
+                child: Text(
+                  current.label.isEmpty
+                      ? '?'
+                      : current.label[0].toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  current.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.sidebarText,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const Icon(Icons.unfold_more_rounded,
+                  size: 15, color: AppColors.sidebarText),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

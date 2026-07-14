@@ -7,13 +7,20 @@ import '../services/imap_service.dart';
 import '../services/smtp_service.dart';
 import '../theme.dart';
 
-/// First-run account configuration, also reused as the settings screen
-/// when [initialConfig] is provided (fields prefilled, passwords kept
-/// unless re-entered).
+/// Account configuration screen with three modes:
+/// - first run (no account yet): full-page, saves and enters the app
+/// - add account ([isAddingAccount]): pushed, saves a NEW account
+/// - edit ([initialConfig] set): prefilled, blank password keeps the
+///   stored one, can delete the account
 class SetupScreen extends ConsumerStatefulWidget {
-  const SetupScreen({super.key, this.initialConfig});
+  const SetupScreen({
+    super.key,
+    this.initialConfig,
+    this.isAddingAccount = false,
+  });
 
   final MailAccountConfig? initialConfig;
+  final bool isAddingAccount;
 
   bool get isEditing => initialConfig != null;
 
@@ -94,13 +101,20 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     });
 
     final storage = ref.read(storageServiceProvider);
+    final currentId = ref.read(currentAccountProvider)?.id;
     final imap = ImapService();
     final smtp = SmtpService();
     try {
-      final imapPassword =
-          await _effectivePassword(_imapPassword.text, storage.readImapPassword);
-      final smtpPassword =
-          await _effectivePassword(_smtpPassword.text, storage.readSmtpPassword);
+      final imapPassword = await _effectivePassword(
+          _imapPassword.text,
+          () async => currentId == null
+              ? null
+              : storage.readImapPassword(currentId));
+      final smtpPassword = await _effectivePassword(
+          _smtpPassword.text,
+          () async => currentId == null
+              ? null
+              : storage.readSmtpPassword(currentId));
       await imap.ensureConnected(_imapConfig, imapPassword);
       await smtp.connect(_smtpConfig, smtpPassword);
       setState(() {
@@ -126,12 +140,22 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
       _statusMessage = null;
     });
     try {
-      await ref.read(accountConfigProvider.notifier).save(
-            config: MailAccountConfig(imap: _imapConfig, smtp: _smtpConfig),
-            imapPassword: _imapPassword.text,
-            smtpPassword: _smtpPassword.text,
-          );
-      if (widget.isEditing && mounted) {
+      final config = MailAccountConfig(imap: _imapConfig, smtp: _smtpConfig);
+      final accounts = ref.read(accountsProvider.notifier);
+      if (widget.isEditing) {
+        await accounts.updateCurrent(
+          config: config,
+          imapPassword: _imapPassword.text,
+          smtpPassword: _smtpPassword.text,
+        );
+      } else {
+        await accounts.addAccount(
+          config: config,
+          imapPassword: _imapPassword.text,
+          smtpPassword: _smtpPassword.text,
+        );
+      }
+      if ((widget.isEditing || widget.isAddingAccount) && mounted) {
         Navigator.of(context).pop(true);
       }
     } catch (e) {
@@ -146,6 +170,34 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     }
   }
 
+  Future<void> _deleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Supprimer ce compte ?'),
+        content: const Text(
+            'Les identifiants et les données locales de ce compte seront '
+            'effacés. Les emails restent sur le serveur.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(accountsProvider.notifier).removeCurrent();
+    if (mounted) Navigator.of(context).pop(true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -153,7 +205,9 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     return Scaffold(
       appBar: widget.isEditing
           ? AppBar(title: const Text('Paramètres du compte'))
-          : null,
+          : widget.isAddingAccount
+              ? AppBar(title: const Text('Ajouter un compte'))
+              : null,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -296,8 +350,22 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                               )
                             : Text(widget.isEditing
                                 ? 'Enregistrer'
-                                : 'Se connecter'),
+                                : widget.isAddingAccount
+                                    ? 'Ajouter le compte'
+                                    : 'Se connecter'),
                       ),
+                      if (widget.isEditing) ...[
+                        const SizedBox(height: 20),
+                        TextButton.icon(
+                          onPressed: _isSaving ? null : _deleteAccount,
+                          style: TextButton.styleFrom(
+                            foregroundColor: scheme.error,
+                          ),
+                          icon: const Icon(Icons.delete_forever_outlined,
+                              size: 18),
+                          label: const Text('Supprimer ce compte'),
+                        ),
+                      ],
                     ],
                   ),
                 ),

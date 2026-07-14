@@ -20,12 +20,12 @@ Future<T> withImapSession<T>(
   Future<T> Function(ImapService imap) action, {
   bool background = false,
 }) async {
-  final config = ref.read(accountConfigProvider).value;
-  if (config == null) {
+  final account = ref.read(currentAccountProvider);
+  if (account == null) {
     throw StateError('Aucun compte configuré');
   }
   final storage = ref.read(storageServiceProvider);
-  final password = await storage.readImapPassword();
+  final password = await storage.readImapPassword(account.id);
   if (password == null) {
     throw StateError(
       'Mot de passe IMAP introuvable dans le trousseau (Keychain). '
@@ -39,12 +39,12 @@ Future<T> withImapSession<T>(
   // capped: nothing may hang the UI forever on a dead socket.
   return imap.runExclusive(() async {
     const opTimeout = Duration(seconds: 25);
-    await imap.ensureConnected(config.imap, password);
+    await imap.ensureConnected(account.config.imap, password);
     try {
       return await action(imap).timeout(opTimeout);
     } catch (_) {
       imap.reset();
-      await imap.ensureConnected(config.imap, password);
+      await imap.ensureConnected(account.config.imap, password);
       return await action(imap).timeout(opTimeout);
     }
   });

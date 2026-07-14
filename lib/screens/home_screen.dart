@@ -182,6 +182,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
     if (saved == true && mounted) {
       _notify('Paramètres enregistrés');
+      setState(() => _selected = null);
+      await _refreshAll();
+    }
+  }
+
+  Future<void> _addAccount() async {
+    final added = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => const SetupScreen(isAddingAccount: true),
+      ),
+    );
+    if (added == true && mounted) {
+      _notify('Compte ajouté');
+      setState(() => _selected = null);
       await _refreshAll();
     }
   }
@@ -195,6 +209,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
 
+    // The opened email belongs to the previous account after a switch.
+    ref.listen(currentAccountProvider.select((account) => account?.id),
+        (previous, next) {
+      if (previous != next && _selected != null) {
+        setState(() {
+          _selected = null;
+          _selectedBody = null;
+        });
+      }
+    });
+
     final sidebar = FolderSidebar(
       onCompose: () {
         if (!isDesktop) Navigator.of(context).maybePop();
@@ -203,6 +228,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       onOpenSettings: () {
         if (!isDesktop) Navigator.of(context).maybePop();
         _openSettings();
+      },
+      onAddAccount: () {
+        if (!isDesktop) Navigator.of(context).maybePop();
+        _addAccount();
       },
       onFolderSelected: isDesktop
           ? null

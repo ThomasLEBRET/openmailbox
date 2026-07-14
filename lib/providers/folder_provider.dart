@@ -5,9 +5,13 @@ import 'config_provider.dart';
 import 'imap_session.dart';
 
 /// Currently selected folder path (defaults to INBOX).
+/// Watching the active account resets it to INBOX on account switch.
 class CurrentFolderNotifier extends Notifier<String> {
   @override
-  String build() => 'INBOX';
+  String build() {
+    ref.watch(currentAccountProvider.select((account) => account?.id));
+    return 'INBOX';
+  }
 
   void select(String path) => state = path;
 }
@@ -36,21 +40,30 @@ String? findTrashPath(List<Folder> folders) {
 class FolderListNotifier extends AsyncNotifier<List<Folder>> {
   @override
   Future<List<Folder>> build() async {
+    final account = ref.watch(currentAccountProvider);
+    if (account == null) return const [];
     final storage = ref.read(storageServiceProvider);
-    return storage.loadFolders();
+    return storage.loadFolders(account.id);
   }
 
   /// Re-lists folders (with STATUS counts) and refreshes the local cache.
   /// The sidebar keeps showing the current list while this runs; a
   /// transient failure keeps it too (badges catch up on the next pass).
   Future<void> refresh() async {
+    final account = ref.read(currentAccountProvider);
+    if (account == null) return;
     final result = await AsyncValue.guard(() async {
       final folders = await withImapSession(
           ref, (imap) => imap.listFolders(),
           background: true);
-      await ref.read(storageServiceProvider).saveFolders(folders);
+      await ref
+          .read(storageServiceProvider)
+          .saveFolders(account.id, folders);
       return folders;
     });
+    // Ignore a stale result after an account switch, and keep the sidebar
+    // populated on transient failures.
+    if (ref.read(currentAccountProvider)?.id != account.id) return;
     if (result.hasError && (state.value?.isNotEmpty ?? false)) {
       return;
     }
@@ -62,7 +75,8 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
   Future<void> adjustCounts(String path,
       {int unreadDelta = 0, int totalDelta = 0}) async {
     final current = state.value;
-    if (current == null) return;
+    final account = ref.read(currentAccountProvider);
+    if (current == null || account == null) return;
     final updated = [
       for (final folder in current)
         if (folder.path == path)
@@ -74,7 +88,7 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
           folder,
     ];
     state = AsyncData(updated);
-    await ref.read(storageServiceProvider).saveFolders(updated);
+    await ref.read(storageServiceProvider).saveFolders(account.id, updated);
   }
 }
 
