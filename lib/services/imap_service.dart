@@ -35,34 +35,67 @@ class ImapService {
     return client;
   }
 
+  /// Lists selectable folders with their message counts
+  /// (one IMAP STATUS per folder).
   Future<List<Folder>> listFolders() async {
-    final mailboxes = await _requireClient.listMailboxes();
-    return mailboxes
-        .map((box) => Folder(name: box.name, path: box.path))
-        .toList();
+    final client = _requireClient;
+    final mailboxes = await client.listMailboxes();
+    final folders = <Folder>[];
+    for (final box in mailboxes) {
+      if (box.isNotSelectable) continue;
+      var total = 0;
+      var unread = 0;
+      try {
+        final status = await client.statusMailbox(
+          box,
+          [StatusFlags.messages, StatusFlags.unseen],
+        );
+        total = status.messagesExists;
+        unread = status.messagesUnseen;
+      } catch (_) {
+        // STATUS is optional per folder; counts stay at 0 if it fails.
+      }
+      folders.add(Folder(
+        name: box.name,
+        path: box.path,
+        total: total,
+        unread: unread,
+      ));
+    }
+    return folders;
   }
 
   /// Fetches the [count] most recent messages of [folderPath] as metadata
-  /// only (no body), suitable for the email list / local cache.
+  /// only — UID, flags and envelope; no body. `(UID FLAGS ENVELOPE)` is
+  /// plain RFC 3501, unlike header-field peeks that some servers
+  /// (e.g. Mailo) reject with "BAD FETCH bad parameter".
   Future<List<Email>> fetchRecentMessages(
     String folderPath, {
     int count = 50,
   }) async {
     final client = _requireClient;
-    await client.selectMailboxByPath(folderPath);
+    final box = await client.selectMailboxByPath(folderPath);
+    if (box.messagesExists == 0) return [];
+
     final result = await client.fetchRecentMessages(
       messageCount: count,
-      criteria: 'BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)]',
+      criteria: '(UID FLAGS ENVELOPE)',
     );
     return result.messages.map((message) {
-      final body = message.decodeTextPlainPart() ?? '';
+      final envelope = message.envelope;
+      final fromAddresses = envelope?.from ?? message.from;
+      final from = (fromAddresses != null && fromAddresses.isNotEmpty)
+          ? (fromAddresses.first.personalName?.isNotEmpty ?? false
+              ? fromAddresses.first.personalName!
+              : fromAddresses.first.email)
+          : '';
       return Email(
         uid: message.uid ?? message.sequenceId ?? 0,
         folder: folderPath,
-        from: message.from?.map((a) => a.email).join(', ') ?? '',
-        subject: message.decodeSubject() ?? '(sans sujet)',
-        date: message.decodeDate() ?? DateTime.now(),
-        preview: body.length > 200 ? body.substring(0, 200) : body,
+        from: from,
+        subject: envelope?.subject ?? message.decodeSubject() ?? '(sans sujet)',
+        date: envelope?.date ?? message.decodeDate() ?? DateTime.now(),
+        preview: '',
         isRead: message.isSeen,
       );
     }).toList();
@@ -73,7 +106,10 @@ class ImapService {
     final client = _requireClient;
     await client.selectMailboxByPath(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
-    final result = await client.fetchMessages(sequence, 'BODY.PEEK[]');
+    final result = await client.uidFetchMessages(sequence, 'BODY.PEEK[]');
+    if (result.messages.isEmpty) {
+      throw StateError('Message introuvable (UID $uid)');
+    }
     return result.messages.first;
   }
 
@@ -82,9 +118,9 @@ class ImapService {
     await client.selectMailboxByPath(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
     if (isSeen) {
-      await client.markSeen(sequence);
+      await client.uidMarkSeen(sequence);
     } else {
-      await client.markUnseen(sequence);
+      await client.uidMarkUnseen(sequence);
     }
   }
 
@@ -92,7 +128,7 @@ class ImapService {
     final client = _requireClient;
     await client.selectMailboxByPath(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
-    await client.markDeleted(sequence);
+    await client.uidMarkDeleted(sequence);
     await client.expunge();
   }
 }

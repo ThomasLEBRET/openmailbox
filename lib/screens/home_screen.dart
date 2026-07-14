@@ -231,8 +231,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         body: _selectedBody ?? '',
       ),
       onDelete: () async {
-        await ref.read(emailListProvider.notifier).deleteEmail(selected.uid);
-        setState(() => _selected = null);
+        try {
+          await ref
+              .read(emailListProvider.notifier)
+              .deleteEmail(selected.uid);
+          setState(() => _selected = null);
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Échec de la suppression : $e')),
+            );
+          }
+        }
       },
       onToggleRead: () async {
         await ref
@@ -252,19 +262,40 @@ class _EmailListHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
     final isSyncing = ref.watch(emailListProvider).isLoading;
+    final currentPath = ref.watch(currentFolderProvider);
+    final folder = ref
+        .watch(folderListProvider)
+        .value
+        ?.where((f) => f.path == currentPath)
+        .firstOrNull;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                if (folder != null && folder.total > 0)
+                  Text(
+                    '${folder.total} message${folder.total > 1 ? 's' : ''}'
+                    '${folder.unread > 0 ? ' · ${folder.unread} non lu${folder.unread > 1 ? 's' : ''}' : ''}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
             ),
           ),
           if (isSyncing)
@@ -280,7 +311,10 @@ class _EmailListHeader extends ConsumerWidget {
             IconButton(
               tooltip: 'Actualiser',
               icon: const Icon(Icons.refresh_rounded, size: 20),
-              onPressed: () => ref.read(emailListProvider.notifier).sync(),
+              onPressed: () {
+                ref.read(emailListProvider.notifier).sync();
+                ref.read(folderListProvider.notifier).refresh();
+              },
             ),
         ],
       ),

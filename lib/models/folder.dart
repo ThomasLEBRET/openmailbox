@@ -11,6 +11,12 @@ abstract class Folder with _$Folder {
 
     /// IMAP path, e.g. "INBOX", "[Gmail]/Sent Mail".
     required String path,
+
+    /// Total number of messages (IMAP STATUS MESSAGES).
+    @Default(0) int total,
+
+    /// Number of unseen messages (IMAP STATUS UNSEEN).
+    @Default(0) int unread,
   }) = _Folder;
 
   factory Folder.fromJson(Map<String, dynamic> json) =>

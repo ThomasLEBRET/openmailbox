@@ -53,6 +53,25 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
       }
     });
   }
+
+  /// Optimistically shifts the unread count of [path] (e.g. -1 when an
+  /// email is read locally) so badges stay coherent between two syncs.
+  Future<void> adjustCounts(String path, {int unreadDelta = 0, int totalDelta = 0}) async {
+    final current = state.value;
+    if (current == null) return;
+    final updated = [
+      for (final folder in current)
+        if (folder.path == path)
+          folder.copyWith(
+            unread: (folder.unread + unreadDelta).clamp(0, 1 << 31),
+            total: (folder.total + totalDelta).clamp(0, 1 << 31),
+          )
+        else
+          folder,
+    ];
+    state = AsyncData(updated);
+    await ref.read(storageServiceProvider).saveFolders(updated);
+  }
 }
 
 final folderListProvider =

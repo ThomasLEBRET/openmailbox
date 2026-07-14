@@ -82,7 +82,7 @@ class StorageService {
     final dbPath = p.join(dir.path, 'openmailbox.db');
     final db = await openDatabase(
       dbPath,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE emails (
@@ -96,24 +96,41 @@ class StorageService {
             PRIMARY KEY (uid, folder)
           )
         ''');
-        await db.execute('''
-          CREATE TABLE folders (
-            path TEXT PRIMARY KEY,
-            name TEXT NOT NULL
-          )
-        ''');
+        await db.execute(_createFoldersTable);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // v2 added total/unread counts; the table is a pure cache,
+          // safe to rebuild from the next sync.
+          await db.execute('DROP TABLE IF EXISTS folders');
+          await db.execute(_createFoldersTable);
+        }
       },
     );
     _db = db;
     return db;
   }
 
+  static const _createFoldersTable = '''
+    CREATE TABLE folders (
+      path TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      total INTEGER NOT NULL DEFAULT 0,
+      unread INTEGER NOT NULL DEFAULT 0
+    )
+  ''';
+
   Future<void> saveFolders(List<Folder> folders) async {
     final db = await _database();
     final batch = db.batch();
     batch.delete('folders');
     for (final folder in folders) {
-      batch.insert('folders', {'path': folder.path, 'name': folder.name});
+      batch.insert('folders', {
+        'path': folder.path,
+        'name': folder.name,
+        'total': folder.total,
+        'unread': folder.unread,
+      });
     }
     await batch.commit(noResult: true);
   }
@@ -122,7 +139,12 @@ class StorageService {
     final db = await _database();
     final rows = await db.query('folders');
     return rows.map((row) {
-      return Folder(name: row['name']! as String, path: row['path']! as String);
+      return Folder(
+        name: row['name']! as String,
+        path: row['path']! as String,
+        total: (row['total'] as int?) ?? 0,
+        unread: (row['unread'] as int?) ?? 0,
+      );
     }).toList();
   }
 

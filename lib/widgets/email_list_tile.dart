@@ -108,16 +108,18 @@ class EmailListTile extends StatelessWidget {
                         ],
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      email.preview.replaceAll(RegExp(r'\s+'), ' ').trim(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: scheme.onSurfaceVariant,
+                    if (email.preview.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        email.preview.replaceAll(RegExp(r'\s+'), ' ').trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

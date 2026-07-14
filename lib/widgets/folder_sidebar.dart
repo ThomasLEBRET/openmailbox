@@ -152,36 +152,73 @@ class _FolderTile extends StatelessWidget {
     final (icon, label) = FolderSidebar._iconAndLabel(folder);
     final color =
         selected ? AppColors.sidebarTextSelected : AppColors.sidebarText;
+    final read = folder.total - folder.unread;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Material(
-        color: selected
-            ? AppColors.primary.withValues(alpha: 0.35)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
+      child: Tooltip(
+        message: '${folder.unread} non lu${folder.unread > 1 ? 's' : ''} · '
+            '$read lu${read > 1 ? 's' : ''} · '
+            '${folder.total} au total',
+        waitDuration: const Duration(milliseconds: 600),
+        child: Material(
+          color: selected
+              ? AppColors.primary.withValues(alpha: 0.35)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                Icon(icon, size: 19, color: color),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 14,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.w400,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onTap,
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(icon, size: 19, color: color),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 14,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w400,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                  if (folder.total > 0) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '${folder.total}',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ],
+                  if (folder.unread > 0) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${folder.unread}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
