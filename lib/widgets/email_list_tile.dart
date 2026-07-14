@@ -38,123 +38,145 @@ class _EmailListTileState extends State<EmailListTile> {
     final initial = sender[0].toUpperCase();
     final unread = !email.isRead;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: Material(
-        color: widget.selected
-            ? scheme.primaryContainer.withValues(alpha: 0.35)
-            : _hovered
-                ? scheme.surfaceContainerHighest.withValues(alpha: 0.4)
-                : Colors.transparent,
-        child: InkWell(
-          onTap: widget.onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: AppColors.avatarColorFor(sender),
-                  child: Text(
-                    initial,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
+    // Floating card (direction A): detached from the background, purple
+    // left edge for unread, accent border when selected.
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: Material(
+          color: widget.selected
+              ? scheme.primaryContainer.withValues(alpha: 0.30)
+              : _hovered
+              ? scheme.surfaceContainerHighest.withValues(alpha: 0.55)
+              : scheme.surfaceContainerLow,
+          elevation: _hovered || widget.selected ? 2 : 0,
+          shadowColor: Colors.black.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: widget.onTap,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: Border(
+                  left: BorderSide(
+                    color: unread ? AppColors.primary : Colors.transparent,
+                    width: 3,
+                  ),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: AppColors.avatarColorFor(sender),
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              sender,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13.5,
-                                fontWeight:
-                                    unread ? FontWeight.w700 : FontWeight.w500,
-                                color: scheme.onSurface,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                sender,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: unread
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: scheme.onSurface,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          if (_hovered)
-                            _QuickActions(
-                              isRead: email.isRead,
-                              onReply: widget.onReply,
-                              onForward: widget.onForward,
-                              onToggleRead: widget.onToggleRead,
-                              onDelete: widget.onDelete,
-                            )
-                          else
-                            Text(
-                              formatEmailDate(email.date),
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: unread
-                                    ? AppColors.primary
-                                    : scheme.onSurfaceVariant,
-                                fontWeight: unread
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              email.subject,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight:
-                                    unread ? FontWeight.w600 : FontWeight.w400,
-                                color: scheme.onSurface,
-                              ),
-                            ),
-                          ),
-                          if (unread && !_hovered) ...[
                             const SizedBox(width: 8),
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
+                            if (_hovered)
+                              _QuickActions(
+                                isRead: email.isRead,
+                                onReply: widget.onReply,
+                                onForward: widget.onForward,
+                                onToggleRead: widget.onToggleRead,
+                                onDelete: widget.onDelete,
+                              )
+                            else
+                              Text(
+                                formatEmailDate(email.date),
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: unread
+                                      ? AppColors.primary
+                                      : scheme.onSurfaceVariant,
+                                  fontWeight: unread
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                email.subject,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: unread
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                  color: scheme.onSurface,
+                                ),
                               ),
                             ),
+                            if (unread && !_hovered) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: const BoxDecoration(
+                                  color: AppColors.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                      if (email.preview.trim().isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          email.preview.replaceAll(RegExp(r'\s+'), ' ').trim(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            color: scheme.onSurfaceVariant,
-                          ),
                         ),
+                        if (email.preview.trim().isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            email.preview
+                                .replaceAll(RegExp(r'\s+'), ' ')
+                                .trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -183,8 +205,12 @@ class _QuickActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    Widget action(IconData icon, String tooltip, VoidCallback onPressed,
-        {Color? color}) {
+    Widget action(
+      IconData icon,
+      String tooltip,
+      VoidCallback onPressed, {
+      Color? color,
+    }) {
       return Tooltip(
         message: tooltip,
         waitDuration: const Duration(milliseconds: 400),
@@ -193,7 +219,11 @@ class _QuickActions extends StatelessWidget {
           onTap: onPressed,
           child: Padding(
             padding: const EdgeInsets.all(4),
-            child: Icon(icon, size: 17, color: color ?? scheme.onSurfaceVariant),
+            child: Icon(
+              icon,
+              size: 17,
+              color: color ?? scheme.onSurfaceVariant,
+            ),
           ),
         ),
       );
@@ -211,8 +241,12 @@ class _QuickActions extends StatelessWidget {
         ),
         action(Icons.reply_rounded, 'Répondre', onReply),
         action(Icons.forward_rounded, 'Transférer', onForward),
-        action(Icons.delete_outline_rounded, 'Supprimer', onDelete,
-            color: scheme.error),
+        action(
+          Icons.delete_outline_rounded,
+          'Supprimer',
+          onDelete,
+          color: scheme.error,
+        ),
       ],
     );
   }

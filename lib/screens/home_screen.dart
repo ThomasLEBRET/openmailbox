@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/email.dart';
@@ -110,6 +111,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         body: body,
       );
 
+  /// J/K navigation: opens the next/previous email in the list.
+  void _openSibling(int delta) {
+    final emails = ref.read(emailListProvider).value;
+    if (emails == null || emails.isEmpty) return;
+    final selected = _selected;
+    var index = selected == null
+        ? -1
+        : emails.indexWhere((email) => email.uid == selected.uid);
+    index = (index + delta).clamp(0, emails.length - 1);
+    if (selected?.uid != emails[index].uid) {
+      _openEmail(emails[index]);
+    }
+  }
+
+  /// Reader shortcuts (toolbar hints: R, F, U, ⌫; J/K to navigate).
+  Map<ShortcutActivator, VoidCallback> get _shortcuts {
+    final selected = _selected;
+    return {
+      const SingleActivator(LogicalKeyboardKey.keyJ): () => _openSibling(1),
+      const SingleActivator(LogicalKeyboardKey.keyK): () => _openSibling(-1),
+      if (selected != null) ...{
+        const SingleActivator(LogicalKeyboardKey.keyR): () =>
+            _replyTo(selected),
+        const SingleActivator(LogicalKeyboardKey.keyF): () => _forward(
+              selected,
+              body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''),
+            ),
+        const SingleActivator(LogicalKeyboardKey.keyU): () async {
+          await ref
+              .read(emailListProvider.notifier)
+              .markRead(selected.uid, !selected.isRead);
+          setState(() =>
+              _selected = selected.copyWith(isRead: !selected.isRead));
+        },
+        const SingleActivator(LogicalKeyboardKey.backspace): () =>
+            _deleteEmail(selected),
+        const SingleActivator(LogicalKeyboardKey.delete): () =>
+            _deleteEmail(selected),
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            setState(() => _selected = null),
+      },
+    };
+  }
+
   Future<void> _openCompose(
       {String to = '', String subject = '', String body = ''}) async {
     final sent = await showDialog<bool>(
@@ -169,23 +214,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     if (isDesktop) {
       return Scaffold(
-        body: Row(
-          children: [
-            SizedBox(width: 240, child: sidebar),
-            Expanded(
-              flex: 2,
-              child: Column(
-                children: [
-                  _EmailListHeader(label: _folderLabel(
-                      ref.watch(currentFolderProvider))),
-                  const Divider(),
-                  Expanded(child: _buildEmailList()),
-                ],
-              ),
+        body: CallbackShortcuts(
+          bindings: _shortcuts,
+          child: Focus(
+            autofocus: true,
+            child: Row(
+              children: [
+                SizedBox(width: 240, child: sidebar),
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    children: [
+                      _EmailListHeader(label: _folderLabel(
+                          ref.watch(currentFolderProvider))),
+                      const Divider(),
+                      Expanded(child: _buildEmailList()),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(flex: 3, child: _buildDetail()),
+              ],
             ),
-            const VerticalDivider(width: 1),
-            Expanded(flex: 3, child: _buildDetail()),
-          ],
+          ),
         ),
       );
     }
@@ -244,9 +295,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         }
         return RefreshIndicator(
           onRefresh: () => ref.read(emailListProvider.notifier).sync(),
-          child: ListView.separated(
+          child: ListView.builder(
+            padding: const EdgeInsets.only(top: 2, bottom: 8),
             itemCount: emails.length,
-            separatorBuilder: (_, _) => const Divider(indent: 64),
             itemBuilder: (context, index) {
               final email = emails[index];
               return EmailListTile(

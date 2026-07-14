@@ -41,8 +41,55 @@ class EmailReader extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Sticky action toolbar (direction B): compact buttons with their
+        // keyboard shortcut, always at the same place.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            border: Border(
+              bottom: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.4),
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              _ToolbarButton(
+                icon: Icons.reply_rounded,
+                label: 'Répondre',
+                shortcut: 'R',
+                onPressed: onReply,
+              ),
+              const SizedBox(width: 6),
+              _ToolbarButton(
+                icon: Icons.forward_rounded,
+                label: 'Transférer',
+                shortcut: 'F',
+                onPressed: onForward,
+              ),
+              const SizedBox(width: 6),
+              _ToolbarButton(
+                icon: email.isRead
+                    ? Icons.mark_email_unread_outlined
+                    : Icons.mark_email_read_outlined,
+                label: email.isRead ? 'Non lu' : 'Lu',
+                shortcut: 'U',
+                onPressed: onToggleRead,
+              ),
+              const Spacer(),
+              _ToolbarButton(
+                icon: Icons.delete_outline_rounded,
+                label: 'Supprimer',
+                shortcut: '⌫',
+                danger: true,
+                onPressed: onDelete,
+              ),
+            ],
+          ),
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+          padding: const EdgeInsets.fromLTRB(24, 18, 24, 0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -53,7 +100,7 @@ class EmailReader extends StatelessWidget {
                     .titleLarge
                     ?.copyWith(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   CircleAvatar(
@@ -97,42 +144,6 @@ class EmailReader extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton.tonalIcon(
-                    onPressed: onReply,
-                    icon: const Icon(Icons.reply_rounded, size: 18),
-                    label: const Text('Répondre'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onForward,
-                    icon: const Icon(Icons.forward_rounded, size: 18),
-                    label: const Text('Transférer'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onToggleRead,
-                    icon: Icon(
-                      email.isRead
-                          ? Icons.mark_email_unread_outlined
-                          : Icons.mark_email_read_outlined,
-                      size: 18,
-                    ),
-                    label: Text(email.isRead ? 'Non lu' : 'Lu'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: onDelete,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: scheme.errorContainer,
-                      foregroundColor: scheme.onErrorContainer,
-                    ),
-                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                    label: const Text('Supprimer'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
             ],
           ),
         ),
@@ -160,6 +171,67 @@ class EmailReader extends StatelessWidget {
           color: AppColors.primary,
           decoration: TextDecoration.none,
         ),
+      ),
+    );
+  }
+}
+
+/// Compact toolbar button with its keyboard shortcut displayed.
+class _ToolbarButton extends StatelessWidget {
+  const _ToolbarButton({
+    required this.icon,
+    required this.label,
+    required this.shortcut,
+    required this.onPressed,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String shortcut;
+  final VoidCallback onPressed;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = danger ? scheme.error : scheme.onSurfaceVariant;
+
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(
+          color: (danger ? scheme.error : scheme.outlineVariant)
+              .withValues(alpha: 0.45),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(fontSize: 12.5)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              shortcut,
+              style: TextStyle(
+                fontSize: 10,
+                fontFamily: 'monospace',
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
