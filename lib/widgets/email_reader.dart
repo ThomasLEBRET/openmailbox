@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/email.dart';
 import '../theme.dart';
@@ -31,44 +31,6 @@ class EmailReader extends StatelessWidget {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
     await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  /// Strips `@media` rules from embedded `<style>` blocks: flutter_html's
-  /// CSS parser crashes on them (LateInitializationError in its
-  /// DeclarationVisitor), which blanked the whole reader pane.
-  static String _sanitizeHtml(String html) {
-    return html.replaceAllMapped(
-      RegExp(r'<style[^>]*>([\s\S]*?)</style>', caseSensitive: false),
-      (match) {
-        final css = _stripMediaRules(match.group(1) ?? '');
-        return '<style>$css</style>';
-      },
-    );
-  }
-
-  static String _stripMediaRules(String css) {
-    final result = StringBuffer();
-    var index = 0;
-    while (index < css.length) {
-      final start = css.indexOf('@media', index);
-      if (start == -1) {
-        result.write(css.substring(index));
-        break;
-      }
-      result.write(css.substring(index, start));
-      final open = css.indexOf('{', start);
-      if (open == -1) break; // Malformed: drop the tail.
-      var depth = 1;
-      var cursor = open + 1;
-      while (cursor < css.length && depth > 0) {
-        final char = css[cursor];
-        if (char == '{') depth++;
-        if (char == '}') depth--;
-        cursor++;
-      }
-      index = cursor;
-    }
-    return result.toString();
   }
 
   @override
@@ -186,13 +148,7 @@ class EmailReader extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
     if (bodyIsHtml) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Html(
-          data: _sanitizeHtml(content),
-          onLinkTap: (url, _, _) => _openLink(url),
-        ),
-      );
+      return _HtmlBodyView(html: content);
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -205,6 +161,89 @@ class EmailReader extends StatelessWidget {
           decoration: TextDecoration.none,
         ),
       ),
+    );
+  }
+}
+
+/// Renders HTML emails in a native WebView (WebKit on macOS/iOS) — the
+/// only engine that handles real-world table-based email layouts.
+/// JavaScript stays disabled; link clicks open the external browser.
+class _HtmlBodyView extends StatefulWidget {
+  const _HtmlBodyView({required this.html});
+
+  final String html;
+
+  @override
+  State<_HtmlBodyView> createState() => _HtmlBodyViewState();
+}
+
+class _HtmlBodyViewState extends State<_HtmlBodyView> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setBackgroundColor(Colors.white)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            final url = request.url;
+            // Initial loadHtmlString navigations use about:/data: — let
+            // them through; everything else opens externally.
+            if (url.startsWith('http://') ||
+                url.startsWith('https://') ||
+                url.startsWith('mailto:')) {
+              EmailReader._openLink(url);
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
+      ..loadHtmlString(_document(widget.html));
+  }
+
+  @override
+  void didUpdateWidget(covariant _HtmlBodyView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.html != widget.html) {
+      _controller.loadHtmlString(_document(widget.html));
+    }
+  }
+
+  /// Emails that are already full documents load as-is; fragments get a
+  /// minimal readable shell (charset, viewport, sane typography).
+  static String _document(String html) {
+    if (html.toLowerCase().contains('<html')) return html;
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body {
+    margin: 16px;
+    font-family: -apple-system, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #222;
+    background: #fff;
+    word-wrap: break-word;
+  }
+  img { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>$html</body>
+</html>''';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.white,
+      child: WebViewWidget(controller: _controller),
     );
   }
 }
