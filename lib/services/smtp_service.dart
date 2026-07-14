@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:enough_mail/enough_mail.dart';
 
 import '../models/config.dart';
@@ -41,22 +43,42 @@ class SmtpService {
     List<MailAddress> bcc = const [],
     required String subject,
     required String body,
+    List<File> attachments = const [],
   }) async {
     final client = _client;
     if (client == null) {
       throw StateError('SmtpService.connect() must be called first');
     }
-    // Single-part text/plain. prepareMultipartAlternativeMessage without
-    // htmlText renders a multipart envelope with NO body parts, which
-    // recipients (e.g. ProtonMail) reject as an invalid message.
-    final message = MessageBuilder.buildSimpleTextMessage(
-      from,
-      to,
-      body,
-      cc: cc,
-      bcc: bcc,
-      subject: subject,
-    );
+
+    final MimeMessage message;
+    if (attachments.isEmpty) {
+      // Single-part text/plain. prepareMultipartAlternativeMessage without
+      // htmlText renders a multipart envelope with NO body parts, which
+      // recipients (e.g. ProtonMail) reject as an invalid message.
+      message = MessageBuilder.buildSimpleTextMessage(
+        from,
+        to,
+        body,
+        cc: cc,
+        bcc: bcc,
+        subject: subject,
+      );
+    } else {
+      final builder = MessageBuilder()
+        ..from = [from]
+        ..to = to
+        ..cc = cc
+        ..bcc = bcc
+        ..subject = subject
+        ..addTextPlain(body);
+      for (final file in attachments) {
+        await builder.addFile(
+          file,
+          MediaType.guessFromFileName(file.path),
+        );
+      }
+      message = builder.buildMimeMessage();
+    }
 
     await client.sendMessage(message);
   }
