@@ -13,6 +13,10 @@ class EmailListTile extends StatefulWidget {
     required this.onForward,
     required this.onToggleRead,
     required this.onDelete,
+    required this.onToggleFlag,
+    this.selectionMode = false,
+    this.checked = false,
+    this.onCheckChanged,
   });
 
   final Email email;
@@ -22,6 +26,13 @@ class EmailListTile extends StatefulWidget {
   final VoidCallback onForward;
   final VoidCallback onToggleRead;
   final VoidCallback onDelete;
+  final VoidCallback onToggleFlag;
+
+  /// True when at least one email is checked: checkboxes stay visible
+  /// and tapping toggles instead of opening.
+  final bool selectionMode;
+  final bool checked;
+  final ValueChanged<bool>? onCheckChanged;
 
   @override
   State<EmailListTile> createState() => _EmailListTileState();
@@ -66,7 +77,9 @@ class _EmailListTileState extends State<EmailListTile> {
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
-            onTap: widget.onTap,
+            onTap: widget.selectionMode
+                ? () => widget.onCheckChanged?.call(!widget.checked)
+                : widget.onTap,
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
@@ -82,6 +95,17 @@ class _EmailListTileState extends State<EmailListTile> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (widget.selectionMode || (_hovered && widget.onCheckChanged != null))
+                    SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: Checkbox(
+                        value: widget.checked,
+                        onChanged: (value) =>
+                            widget.onCheckChanged?.call(value ?? false),
+                      ),
+                    )
+                  else
                   CircleAvatar(
                     radius: 18,
                     backgroundColor: AppColors.avatarColorFor(sender),
@@ -115,14 +139,21 @@ class _EmailListTileState extends State<EmailListTile> {
                                 ),
                               ),
                             ),
+                            if (email.isFlagged && !_hovered) ...[
+                              const Icon(Icons.star_rounded,
+                                  size: 15, color: Color(0xFFF2B01E)),
+                              const SizedBox(width: 4),
+                            ],
                             const SizedBox(width: 8),
                             if (_hovered)
                               _QuickActions(
                                 isRead: email.isRead,
+                                isFlagged: email.isFlagged,
                                 onReply: widget.onReply,
                                 onForward: widget.onForward,
                                 onToggleRead: widget.onToggleRead,
                                 onDelete: widget.onDelete,
+                                onToggleFlag: widget.onToggleFlag,
                               )
                             else
                               Text(
@@ -200,17 +231,21 @@ class _EmailListTileState extends State<EmailListTile> {
 class _QuickActions extends StatelessWidget {
   const _QuickActions({
     required this.isRead,
+    required this.isFlagged,
     required this.onReply,
     required this.onForward,
     required this.onToggleRead,
     required this.onDelete,
+    required this.onToggleFlag,
   });
 
   final bool isRead;
+  final bool isFlagged;
   final VoidCallback onReply;
   final VoidCallback onForward;
   final VoidCallback onToggleRead;
   final VoidCallback onDelete;
+  final VoidCallback onToggleFlag;
 
   @override
   Widget build(BuildContext context) {
@@ -243,6 +278,12 @@ class _QuickActions extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        action(
+          isFlagged ? Icons.star_rounded : Icons.star_outline_rounded,
+          isFlagged ? 'Retirer l\'étoile' : 'Ajouter une étoile',
+          onToggleFlag,
+          color: isFlagged ? const Color(0xFFF2B01E) : null,
+        ),
         action(
           isRead
               ? Icons.mark_email_unread_outlined

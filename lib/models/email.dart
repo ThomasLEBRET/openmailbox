@@ -23,6 +23,9 @@ abstract class Email with _$Email {
     /// First ~200 chars of the body, for the list preview.
     required String preview,
     required bool isRead,
+
+    /// IMAP \Flagged — starred/favori.
+    @Default(false) bool isFlagged,
   }) = _Email;
 
   factory Email.fromJson(Map<String, dynamic> json) =>

@@ -282,7 +282,28 @@ class ImapService {
       date: envelope?.date ?? message.decodeDate() ?? DateTime.now(),
       preview: '',
       isRead: message.isSeen,
+      isFlagged: message.isFlagged,
     );
+  }
+
+  /// Number of unseen messages in INBOX (UID SEARCH UNSEEN).
+  Future<int> inboxUnseenCount() async {
+    final client = _requireClient;
+    await _select('INBOX', forceRefresh: true);
+    final result = await client.uidSearchMessages(searchCriteria: 'UNSEEN');
+    return result.matchingSequence?.toList().length ?? 0;
+  }
+
+  Future<void> setFlagged(String folderPath, int uid,
+      {required bool isFlagged}) async {
+    final client = _requireClient;
+    await _select(folderPath);
+    final sequence = MessageSequence.fromId(uid, isUid: true);
+    if (isFlagged) {
+      await client.uidMarkFlagged(sequence);
+    } else {
+      await client.uidMarkUnflagged(sequence);
+    }
   }
 
   /// Fetches the readable text of a single message for the reader panel.

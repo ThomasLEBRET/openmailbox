@@ -14,6 +14,9 @@ abstract class MailAccount with _$MailAccount {
   const factory MailAccount({
     required String id,
     required MailAccountConfig config,
+
+    /// Appended to composed messages ("-- " separator added by the app).
+    @Default('') String signature,
   }) = _MailAccount;
 
   factory MailAccount.fromJson(Map<String, dynamic> json) =>

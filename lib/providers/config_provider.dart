@@ -44,6 +44,7 @@ class AccountsNotifier extends AsyncNotifier<AccountsState> {
     required MailAccountConfig config,
     String? imapPassword,
     String? smtpPassword,
+    String? signature,
   }) async {
     final current = state.value?.current;
     if (current == null) return;
@@ -66,7 +67,10 @@ class AccountsNotifier extends AsyncNotifier<AccountsState> {
       accounts: [
         for (final account in accountsState.accounts)
           if (account.id == current.id)
-            account.copyWith(config: config)
+            account.copyWith(
+              config: config,
+              signature: signature ?? account.signature,
+            )
           else
             account,
       ],

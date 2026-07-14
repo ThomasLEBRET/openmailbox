@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/email.dart';
+import '../providers/prefs_provider.dart';
 import '../theme.dart';
 
 class EmailReader extends StatelessWidget {
@@ -240,21 +242,38 @@ class _ToolbarButton extends StatelessWidget {
 /// Renders HTML emails in a native WebView (WebKit on macOS/iOS) — the
 /// only engine that handles real-world table-based email layouts.
 /// JavaScript stays disabled; link clicks open the external browser.
-class _HtmlBodyView extends StatefulWidget {
+/// Remote images are stripped by default (tracking pixels) and load
+/// on demand via the banner button.
+class _HtmlBodyView extends ConsumerStatefulWidget {
   const _HtmlBodyView({required this.html});
 
   final String html;
 
   @override
-  State<_HtmlBodyView> createState() => _HtmlBodyViewState();
+  ConsumerState<_HtmlBodyView> createState() => _HtmlBodyViewState();
 }
 
-class _HtmlBodyViewState extends State<_HtmlBodyView> {
+class _HtmlBodyViewState extends ConsumerState<_HtmlBodyView> {
   late final WebViewController _controller;
+  late bool _showImages;
+  late bool _hasRemoteImages;
+
+  static final _remoteSrc = RegExp(
+    '''src\\s*=\\s*("https?://[^"]*"|'https?://[^']*')''',
+    caseSensitive: false,
+  );
+
+  static String _stripRemoteImages(String html) =>
+      html.replaceAllMapped(_remoteSrc, (m) => 'data-blocked-src=${m[1]}');
+
+  String get _effectiveHtml =>
+      _showImages ? widget.html : _stripRemoteImages(widget.html);
 
   @override
   void initState() {
     super.initState();
+    _showImages = !(ref.read(prefsProvider).value?.blockRemoteImages ?? true);
+    _hasRemoteImages = _remoteSrc.hasMatch(widget.html);
     // Note: setBackgroundColor is NOT called — it throws
     // UnimplementedError on macOS and kills the whole widget subtree.
     // The ColoredBox in build() provides the white backdrop instead.
@@ -275,15 +294,23 @@ class _HtmlBodyViewState extends State<_HtmlBodyView> {
           },
         ),
       )
-      ..loadHtmlString(_document(widget.html));
+      ..loadHtmlString(_document(_effectiveHtml));
   }
 
   @override
   void didUpdateWidget(covariant _HtmlBodyView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.html != widget.html) {
-      _controller.loadHtmlString(_document(widget.html));
+      _showImages =
+          !(ref.read(prefsProvider).value?.blockRemoteImages ?? true);
+      _hasRemoteImages = _remoteSrc.hasMatch(widget.html);
+      _controller.loadHtmlString(_document(_effectiveHtml));
     }
+  }
+
+  void _revealImages() {
+    setState(() => _showImages = true);
+    _controller.loadHtmlString(_document(widget.html));
   }
 
   /// Emails that are already full documents load as-is; fragments get a
@@ -315,9 +342,41 @@ class _HtmlBodyViewState extends State<_HtmlBodyView> {
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: Colors.white,
-      child: WebViewWidget(controller: _controller),
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        if (_hasRemoteImages && !_showImages)
+          Container(
+            width: double.infinity,
+            color: scheme.surfaceContainerHigh,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Row(
+              children: [
+                Icon(Icons.image_not_supported_outlined,
+                    size: 15, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Images distantes bloquées (confidentialité)',
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _revealImages,
+                  child: const Text('Afficher les images',
+                      style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ColoredBox(
+            color: Colors.white,
+            child: WebViewWidget(controller: _controller),
+          ),
+        ),
+      ],
     );
   }
 }

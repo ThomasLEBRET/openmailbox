@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,13 +9,86 @@ import '../models/prefs.dart';
 import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
+import '../providers/inbox_watcher.dart';
 import '../providers/prefs_provider.dart';
+import '../theme.dart';
 import '../widgets/email_list_tile.dart';
 import '../widgets/email_reader.dart';
 import '../widgets/folder_sidebar.dart';
 import 'appearance_dialog.dart';
 import 'compose_screen.dart';
 import 'setup_screen.dart';
+
+/// Runs [doSend] after a 10-second undo window surfaced as a SnackBar.
+void scheduleSend(
+  ScaffoldMessengerState messenger,
+  Future<void> Function() doSend, {
+  VoidCallback? onSent,
+}) {
+  var cancelled = false;
+  messenger
+    ..clearSnackBars()
+    ..showSnackBar(SnackBar(
+      content: const Text('Message envoyé — 10 s pour annuler'),
+      behavior: SnackBarBehavior.floating,
+      width: 420,
+      duration: const Duration(seconds: 10),
+      action: SnackBarAction(
+        label: 'Annuler',
+        onPressed: () {
+          cancelled = true;
+          messenger
+            ..clearSnackBars()
+            ..showSnackBar(const SnackBar(
+              content: Text('Envoi annulé'),
+              behavior: SnackBarBehavior.floating,
+              width: 420,
+            ));
+        },
+      ),
+    ));
+  Timer(const Duration(seconds: 10), () async {
+    if (cancelled) return;
+    try {
+      await doSend();
+      onSent?.call();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Échec de l\'envoi : $e'),
+        behavior: SnackBarBehavior.floating,
+        width: 420,
+        duration: const Duration(seconds: 6),
+      ));
+    }
+  });
+}
+
+/// Plain-text quote of the original message for replies.
+String quoteBody(Email email, String? body, bool isHtml) {
+  if (body == null || body.trim().isEmpty) return '';
+  var text = body;
+  if (isHtml) {
+    text = text
+        .replaceAll(RegExp(r'<(br|/p|/div|/tr)[^>]*>', caseSensitive: false),
+            '\n')
+        .replaceAll(RegExp(r'<(style|script)[\s\S]*?</(style|script)>',
+            caseSensitive: false), '')
+        .replaceAll(RegExp(r'<[^>]+>'), ' ')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"');
+    text = text
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((line) => line.isNotEmpty)
+        .join('\n');
+  }
+  final quoted =
+      text.trim().split('\n').map((line) => '> $line').join('\n');
+  return '\n\nLe ${formatEmailDate(email.date)}, ${email.from} a écrit :\n$quoted';
+}
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -38,6 +113,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   String _localQuery = '';
   bool _serverResults = false;
 
+  /// UIDs checked for bulk actions.
+  final Set<int> _checked = {};
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -51,7 +129,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(_refreshAll);
+    Future.microtask(() {
+      _refreshAll();
+      // Start the new-mail watcher (notifications + badge).
+      ref.read(inboxWatcherProvider);
+    });
   }
 
   /// Emails and folder counts refresh in parallel — they run on two
@@ -132,9 +214,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  void _replyTo(Email email) => _openCompose(
+  void _replyTo(Email email, {String quote = ''}) => _openCompose(
         to: email.fromEmail.isNotEmpty ? email.fromEmail : email.from,
         subject: 'Re: ${email.subject}',
+        body: quote,
       );
 
   void _forward(Email email, {String body = ''}) => _openCompose(
@@ -182,8 +265,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       const SingleActivator(LogicalKeyboardKey.keyK):
           _guarded(() => _openSibling(-1)),
       if (selected != null) ...{
-        const SingleActivator(LogicalKeyboardKey.keyR):
-            _guarded(() => _replyTo(selected)),
+        const SingleActivator(LogicalKeyboardKey.keyR): _guarded(() =>
+            _replyTo(selected,
+                quote:
+                    quoteBody(selected, _selectedBody, _selectedBodyIsHtml))),
         const SingleActivator(LogicalKeyboardKey.keyF): _guarded(() =>
             _forward(selected,
                 body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''))),
@@ -246,7 +331,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Future<void> _openCompose(
       {String to = '', String subject = '', String body = ''}) async {
-    final sent = await showDialog<bool>(
+    final result = await showDialog<Object>(
       context: context,
       builder: (_) => ComposeScreen(
         initialTo: to,
@@ -254,10 +339,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         initialBody: body,
       ),
     );
-    if (sent == true && mounted) {
-      _notify('Message envoyé');
-      // Bump the Envoyés counter in the background.
-      ref.read(folderListProvider.notifier).refresh();
+    if (result is Future<void> Function() && mounted) {
+      scheduleSend(
+        ScaffoldMessenger.of(context),
+        result,
+        onSent: () {
+          if (mounted) {
+            ref.read(folderListProvider.notifier).refresh();
+          }
+        },
+      );
     }
   }
 
@@ -294,9 +385,84 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return path.split('/').last;
   }
 
+  // --- Bulk actions ----------------------------------------------------------
+
+  Future<void> _bulkMarkRead() async {
+    final notifier = ref.read(emailListProvider.notifier);
+    for (final uid in _checked.toList()) {
+      await notifier.markRead(uid, true);
+    }
+    setState(() => _checked.clear());
+  }
+
+  Future<void> _bulkFlag() async {
+    final notifier = ref.read(emailListProvider.notifier);
+    for (final uid in _checked.toList()) {
+      await notifier.toggleFlagged(uid);
+    }
+    setState(() => _checked.clear());
+  }
+
+  Future<void> _bulkDelete() async {
+    final uids = _checked.toList();
+    setState(() => _checked.clear());
+    final notifier = ref.read(emailListProvider.notifier);
+    var failures = 0;
+    for (final uid in uids) {
+      try {
+        await notifier.deleteEmail(uid);
+      } catch (_) {
+        failures++;
+      }
+    }
+    _notify(failures == 0
+        ? '${uids.length} email${uids.length > 1 ? 's' : ''} supprimé${uids.length > 1 ? 's' : ''}'
+        : 'Suppression partielle : $failures échec${failures > 1 ? 's' : ''}');
+  }
+
+  Widget _buildSelectionBar() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      color: scheme.surfaceContainerHigh,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${_checked.length} sélectionné${_checked.length > 1 ? 's' : ''}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Marquer lus',
+            icon: const Icon(Icons.mark_email_read_outlined, size: 20),
+            onPressed: _bulkMarkRead,
+          ),
+          IconButton(
+            tooltip: 'Étoile',
+            icon: const Icon(Icons.star_outline_rounded, size: 20),
+            onPressed: _bulkFlag,
+          ),
+          IconButton(
+            tooltip: 'Supprimer',
+            icon: Icon(Icons.delete_outline_rounded,
+                size: 20, color: scheme.error),
+            onPressed: _bulkDelete,
+          ),
+          IconButton(
+            tooltip: 'Annuler la sélection',
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: () => setState(() => _checked.clear()),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Folder title + counts + search toggle, and the search bar when open.
   Widget _buildListHeader() {
     final scheme = Theme.of(context).colorScheme;
+    if (_checked.isNotEmpty) return _buildSelectionBar();
     return Column(
       children: [
         _EmailListHeader(
@@ -369,6 +535,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _selected = null;
           _selectedBody = null;
         });
+      }
+    });
+    // Checked emails belong to the previous folder.
+    ref.listen(currentFolderProvider, (previous, next) {
+      if (previous != next && _checked.isNotEmpty) {
+        setState(() => _checked.clear());
       }
     });
 
@@ -529,6 +701,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               return EmailListTile(
                 email: email,
                 selected: _selected?.uid == email.uid,
+                selectionMode: _checked.isNotEmpty,
+                checked: _checked.contains(email.uid),
+                onCheckChanged: (checked) => setState(() {
+                  if (checked) {
+                    _checked.add(email.uid);
+                  } else {
+                    _checked.remove(email.uid);
+                  }
+                }),
                 onTap: () => _openEmail(email),
                 onReply: () => _replyTo(email),
                 onForward: () => _forward(email),
@@ -536,6 +717,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     .read(emailListProvider.notifier)
                     .markRead(email.uid, !email.isRead),
                 onDelete: () => _deleteEmail(email),
+                onToggleFlag: () =>
+                    ref.read(emailListProvider.notifier).toggleFlagged(email.uid),
               );
             },
           ),
@@ -556,7 +739,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       email: selected,
       body: _selectedBody,
       bodyIsHtml: _selectedBodyIsHtml,
-      onReply: () => _replyTo(selected),
+      onReply: () => _replyTo(selected,
+          quote: quoteBody(selected, _selectedBody, _selectedBodyIsHtml)),
       onForward: () => _forward(
         selected,
         body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''),
@@ -725,8 +909,10 @@ class _ReaderScreenState extends ConsumerState<_ReaderScreen> {
     }
   }
 
-  Future<void> _compose({String to = '', String subject = '', String body = ''}) {
-    return showDialog<bool>(
+  Future<void> _compose(
+      {String to = '', String subject = '', String body = ''}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await showDialog<Object>(
       context: context,
       builder: (_) => ComposeScreen(
         initialTo: to,
@@ -734,6 +920,9 @@ class _ReaderScreenState extends ConsumerState<_ReaderScreen> {
         initialBody: body,
       ),
     );
+    if (result is Future<void> Function()) {
+      scheduleSend(messenger, result);
+    }
   }
 
   @override
@@ -755,6 +944,7 @@ class _ReaderScreenState extends ConsumerState<_ReaderScreen> {
         onReply: () => _compose(
           to: _email.fromEmail.isNotEmpty ? _email.fromEmail : _email.from,
           subject: 'Re: ${_email.subject}',
+          body: quoteBody(_email, _body, _bodyIsHtml),
         ),
         onForward: () => _compose(
           subject: 'Fwd: ${_email.subject}',

@@ -126,7 +126,7 @@ class StorageService {
     final dbPath = p.join(dir.path, 'openmailbox.db');
     final db = await openDatabase(
       dbPath,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute(_createEmailsTable);
         await db.execute(_createFoldersTable);
@@ -140,6 +140,16 @@ class StorageService {
           await db.execute('DROP TABLE IF EXISTS folders');
           await db.execute(_createEmailsTable);
           await db.execute(_createFoldersTable);
+        }
+        if (oldVersion < 5) {
+          // v5 adds the \Flagged star. Idempotent per the migration rule.
+          final columns = (await db.rawQuery('PRAGMA table_info(emails)'))
+              .map((row) => row['name'] as String)
+              .toSet();
+          if (!columns.contains('isFlagged')) {
+            await db.execute(
+                'ALTER TABLE emails ADD COLUMN isFlagged INTEGER NOT NULL DEFAULT 0');
+          }
         }
       },
     );
@@ -158,6 +168,7 @@ class StorageService {
       date INTEGER NOT NULL,
       preview TEXT NOT NULL,
       isRead INTEGER NOT NULL,
+      isFlagged INTEGER NOT NULL DEFAULT 0,
       body TEXT,
       bodyIsHtml INTEGER,
       PRIMARY KEY (account, folder, uid)
@@ -226,15 +237,17 @@ class StorageService {
       batch.rawInsert(
         '''
         INSERT INTO emails
-          (account, uid, folder, "from", fromEmail, subject, date, preview, isRead)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (account, uid, folder, "from", fromEmail, subject, date, preview,
+           isRead, isFlagged)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account, folder, uid) DO UPDATE SET
           "from" = excluded."from",
           fromEmail = excluded.fromEmail,
           subject = excluded.subject,
           date = excluded.date,
           preview = excluded.preview,
-          isRead = excluded.isRead
+          isRead = excluded.isRead,
+          isFlagged = excluded.isFlagged
         ''',
         [
           accountId,
@@ -246,6 +259,7 @@ class StorageService {
           email.date.millisecondsSinceEpoch,
           email.preview,
           email.isRead ? 1 : 0,
+          email.isFlagged ? 1 : 0,
         ],
       );
     }
@@ -269,6 +283,17 @@ class StorageService {
     await db.update(
       'emails',
       {'isRead': isRead ? 1 : 0},
+      where: 'account = ? AND folder = ? AND uid = ?',
+      whereArgs: [accountId, folder, uid],
+    );
+  }
+
+  Future<void> setFlagged(
+      String accountId, String folder, int uid, bool isFlagged) async {
+    final db = await _database();
+    await db.update(
+      'emails',
+      {'isFlagged': isFlagged ? 1 : 0},
       where: 'account = ? AND folder = ? AND uid = ?',
       whereArgs: [accountId, folder, uid],
     );
@@ -329,6 +354,7 @@ class StorageService {
       date: DateTime.fromMillisecondsSinceEpoch(row['date']! as int),
       preview: row['preview']! as String,
       isRead: (row['isRead']! as int) == 1,
+      isFlagged: ((row['isFlagged'] as int?) ?? 0) == 1,
     );
   }
 }

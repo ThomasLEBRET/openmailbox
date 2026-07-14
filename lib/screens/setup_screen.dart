@@ -47,6 +47,11 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
       TextEditingController(text: widget.initialConfig?.smtp.username ?? '');
   final _smtpPassword = TextEditingController();
 
+  late final _signature = TextEditingController(
+      text: widget.isEditing
+          ? (ref.read(currentAccountProvider)?.signature ?? '')
+          : '');
+
   bool _isTesting = false;
   bool _isSaving = false;
   String? _statusMessage;
@@ -147,6 +152,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
           config: config,
           imapPassword: _imapPassword.text,
           smtpPassword: _smtpPassword.text,
+          signature: _signature.text,
         );
       } else {
         await accounts.addAccount(
@@ -305,6 +311,19 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                             ? 'Laisser vide pour conserver l\'actuel'
                             : null,
                       ),
+                      if (widget.isEditing) ...[
+                        const SizedBox(height: 20),
+                        _sectionLabel(context, 'Signature'),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _signature,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            hintText:
+                                'Ajoutée à la fin de vos messages (optionnel)',
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       if (_statusMessage != null) ...[
                         Container(

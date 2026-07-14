@@ -49,10 +49,19 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
 
   final List<_Attachment> _attachments = [];
   bool _showCcBcc = false;
-  bool _isSending = false;
   String? _error;
 
   static final _emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  @override
+  void initState() {
+    super.initState();
+    final signature = ref.read(currentAccountProvider)?.signature ?? '';
+    if (signature.trim().isNotEmpty) {
+      _body.text = '${_body.text}\n\n-- \n${signature.trim()}';
+      _body.selection = const TextSelection.collapsed(offset: 0);
+    }
+  }
 
   int get _attachmentsTotal =>
       _attachments.fold(0, (sum, attachment) => sum + attachment.size);
@@ -102,42 +111,45 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
     });
   }
 
-  Future<void> _send() async {
+  /// Validates, then hands a ready-to-run send closure back to the
+  /// caller — the actual SMTP send happens after the undo delay.
+  void _queueSend() {
     if (!_formKey.currentState!.validate()) return;
     final account = ref.read(currentAccountProvider);
     if (account == null) return;
-    final config = account.config;
+    final storage = ref.read(storageServiceProvider);
 
-    setState(() {
-      _isSending = true;
-      _error = null;
-    });
-    final smtp = SmtpService();
-    try {
-      final storage = ref.read(storageServiceProvider);
-      final password = await storage.readSmtpPassword(account.id);
-      if (password == null) {
-        throw StateError('Mot de passe SMTP introuvable');
+    final to = _parseAddresses(_to.text);
+    final cc = _parseAddresses(_cc.text);
+    final bcc = _parseAddresses(_bcc.text);
+    final subject = _subject.text.trim();
+    final body = _body.text;
+    final files = _attachments.map((a) => File(a.file.path)).toList();
+
+    Future<void> doSend() async {
+      final smtp = SmtpService();
+      try {
+        final password = await storage.readSmtpPassword(account.id);
+        if (password == null) {
+          throw StateError('Mot de passe SMTP introuvable');
+        }
+        await smtp.connect(account.config.smtp, password);
+        await smtp.sendMessage(
+          from: MailAddress(
+              account.config.smtp.username, account.config.smtp.username),
+          to: to,
+          cc: cc,
+          bcc: bcc,
+          subject: subject,
+          body: body,
+          attachments: files,
+        );
+      } finally {
+        await smtp.disconnect();
       }
-
-      await smtp.connect(config.smtp, password);
-      await smtp.sendMessage(
-        from: MailAddress(config.smtp.username, config.smtp.username),
-        to: _parseAddresses(_to.text),
-        cc: _parseAddresses(_cc.text),
-        bcc: _parseAddresses(_bcc.text),
-        subject: _subject.text.trim(),
-        body: _body.text,
-        attachments:
-            _attachments.map((a) => File(a.file.path)).toList(),
-      );
-      if (mounted) Navigator.of(context).pop(true);
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Échec de l\'envoi : $e');
-    } finally {
-      await smtp.disconnect();
-      if (mounted) setState(() => _isSending = false);
     }
+
+    Navigator.of(context).pop(doSend);
   }
 
   @override
@@ -282,7 +294,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                     IconButton(
                       tooltip: 'Joindre des fichiers (10 Mo max)',
                       icon: const Icon(Icons.attach_file_rounded),
-                      onPressed: _isSending ? null : _pickAttachments,
+                      onPressed: _pickAttachments,
                     ),
                     if (_attachments.isNotEmpty)
                       Text(
@@ -307,23 +319,14 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                           : const SizedBox.shrink(),
                     ),
                     FilledButton.icon(
-                      onPressed: _isSending ? null : _send,
+                      onPressed: _queueSend,
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.accentOf(context),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 24, vertical: 14),
                       ),
-                      icon: _isSending
-                          ? const SizedBox(
-                              height: 16,
-                              width: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.send_rounded, size: 18),
+                      icon: const Icon(Icons.send_rounded, size: 18),
                       label: const Text('Envoyer'),
                     ),
                   ],

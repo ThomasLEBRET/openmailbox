@@ -7,16 +7,18 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'models/prefs.dart';
 import 'providers/config_provider.dart';
 import 'providers/prefs_provider.dart';
+import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/setup_screen.dart';
 import 'theme.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  await NotificationService.init();
   runApp(const ProviderScope(child: OpenMailboxApp()));
 }
 

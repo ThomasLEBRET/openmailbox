@@ -164,6 +164,31 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     }
   }
 
+  /// Toggles the star locally then pushes \Flagged best-effort.
+  Future<void> toggleFlagged(int uid) async {
+    final accountId = _accountId;
+    final folder = ref.read(currentFolderProvider);
+    final email =
+        state.value?.where((e) => e.uid == uid).firstOrNull;
+    if (email == null) return;
+    final flagged = !email.isFlagged;
+    await ref
+        .read(storageServiceProvider)
+        .setFlagged(accountId, folder, uid, flagged);
+    state = state.whenData(
+      (emails) => [
+        for (final e in emails)
+          if (e.uid == uid) e.copyWith(isFlagged: flagged) else e,
+      ],
+    );
+    try {
+      await withImapSession(
+          ref, (imap) => imap.setFlagged(folder, uid, isFlagged: flagged));
+    } catch (_) {
+      // Best-effort; next sync reconciles.
+    }
+  }
+
   /// Moves the email to the trash folder (or deletes permanently when
   /// already in the trash). Optimistic: the email leaves the list and the
   /// counts shift immediately; if the server call then fails, everything
