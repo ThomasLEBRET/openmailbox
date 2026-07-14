@@ -154,37 +154,38 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Header
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 14, 8, 14),
-                decoration: BoxDecoration(
-                  color: AppColors.sidebarBackground,
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(16)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.edit_rounded,
-                        color: Colors.white70, size: 18),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        'Nouveau message',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14.5,
+              Builder(builder: (context) {
+                final side = AppColors.sidebarOf(context);
+                return Container(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 8, 14),
+                  decoration: BoxDecoration(
+                    color: side.bg,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(16)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_rounded, color: side.text, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Nouveau message',
+                          style: TextStyle(
+                            color: side.textSelected,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14.5,
+                          ),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close,
-                          color: Colors.white70, size: 20),
-                      tooltip: 'Fermer',
-                      onPressed: () => Navigator.of(context).pop(false),
-                    ),
-                  ],
-                ),
-              ),
+                      IconButton(
+                        icon: Icon(Icons.close, color: side.text, size: 20),
+                        tooltip: 'Fermer',
+                        onPressed: () => Navigator.of(context).pop(false),
+                      ),
+                    ],
+                  ),
+                );
+              }),
               // Recipients
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),

@@ -85,9 +85,10 @@ class FolderSidebar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final foldersAsync = ref.watch(folderListProvider);
     final currentFolder = ref.watch(currentFolderProvider);
+    final side = AppColors.sidebarOf(context);
 
     return Container(
-      color: AppColors.sidebarBackground,
+      color: side.bg,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -102,7 +103,7 @@ class FolderSidebar extends ConsumerWidget {
                   Text(
                     'OpenMailbox',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
+                          color: side.textSelected,
                           fontWeight: FontWeight.w700,
                         ),
                   ),
@@ -125,8 +126,8 @@ class FolderSidebar extends ConsumerWidget {
             ),
             Expanded(
               child: foldersAsync.when(
-                loading: () => const Center(
-                  child: CircularProgressIndicator(color: Colors.white54),
+                loading: () => Center(
+                  child: CircularProgressIndicator(color: side.muted),
                 ),
                 error: (error, _) => _SidebarError(
                   message: '$error',
@@ -159,12 +160,12 @@ class FolderSidebar extends ConsumerWidget {
                           onTap: () => _selectFolder(ref, folder.path),
                         ),
                       if (custom.isNotEmpty) ...[
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(12, 16, 12, 6),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
                           child: Text(
                             'DOSSIERS',
                             style: TextStyle(
-                              color: Colors.white38,
+                              color: side.muted,
                               fontSize: 10.5,
                               letterSpacing: 1.2,
                               fontWeight: FontWeight.w700,
@@ -185,24 +186,23 @@ class FolderSidebar extends ConsumerWidget {
                 },
               ),
             ),
-            const Divider(color: Colors.white12),
+            Divider(color: side.divider),
             ListTile(
               dense: true,
-              leading: const Icon(Icons.palette_outlined,
-                  color: AppColors.sidebarText, size: 20),
-              title: const Text(
+              leading: Icon(Icons.palette_outlined, color: side.text, size: 20),
+              title: Text(
                 'Apparence',
-                style: TextStyle(color: AppColors.sidebarText, fontSize: 14),
+                style: TextStyle(color: side.text, fontSize: 14),
               ),
               onTap: onOpenAppearance,
             ),
             ListTile(
               dense: true,
-              leading: const Icon(Icons.settings_outlined,
-                  color: AppColors.sidebarText, size: 20),
-              title: const Text(
+              leading:
+                  Icon(Icons.settings_outlined, color: side.text, size: 20),
+              title: Text(
                 'Paramètres',
-                style: TextStyle(color: AppColors.sidebarText, fontSize: 14),
+                style: TextStyle(color: side.text, fontSize: 14),
               ),
               onTap: onOpenSettings,
             ),
@@ -286,7 +286,7 @@ class _AccountSwitcher extends ConsumerWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
+            color: AppColors.sidebarOf(context).chip,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
@@ -310,14 +310,14 @@ class _AccountSwitcher extends ConsumerWidget {
                 child: Text(
                   current.label,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.sidebarText,
+                  style: TextStyle(
+                    color: AppColors.sidebarOf(context).text,
                     fontSize: 12,
                   ),
                 ),
               ),
-              const Icon(Icons.unfold_more_rounded,
-                  size: 15, color: AppColors.sidebarText),
+              Icon(Icons.unfold_more_rounded,
+                  size: 15, color: AppColors.sidebarOf(context).text),
             ],
           ),
         ),
@@ -343,8 +343,8 @@ class _FolderTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        selected ? AppColors.sidebarTextSelected : AppColors.sidebarText;
+    final side = AppColors.sidebarOf(context);
+    final color = selected ? side.textSelected : side.text;
     final read = folder.total - folder.unread;
 
     return Padding(
@@ -385,8 +385,8 @@ class _FolderTile extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text(
                       '${folder.total}',
-                      style: const TextStyle(
-                        color: Colors.white38,
+                      style: TextStyle(
+                        color: side.muted,
                         fontSize: 11.5,
                       ),
                     ),
@@ -433,20 +433,23 @@ class _SidebarError extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.cloud_off_rounded, color: Colors.white38, size: 32),
+          Icon(Icons.cloud_off_rounded,
+              color: AppColors.sidebarOf(context).muted, size: 32),
           const SizedBox(height: 12),
           Text(
             message,
             textAlign: TextAlign.center,
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(
+                color: AppColors.sidebarOf(context).text, fontSize: 12),
           ),
           const SizedBox(height: 12),
           TextButton(
             onPressed: onRetry,
-            child: const Text('Réessayer',
-                style: TextStyle(color: Colors.white)),
+            child: Text('Réessayer',
+                style: TextStyle(
+                    color: AppColors.sidebarOf(context).textSelected)),
           ),
         ],
       ),

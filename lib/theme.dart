@@ -36,6 +36,36 @@ abstract class AppColors {
   static bool compactOf(BuildContext context) =>
       Theme.of(context).extension<AppStyle>()?.compact ?? false;
 
+  /// Sidebar colors for the current theme: deep aubergine in dark mode,
+  /// tinted light grey in light mode.
+  static ({
+    Color bg,
+    Color text,
+    Color textSelected,
+    Color muted,
+    Color divider,
+    Color chip,
+  }) sidebarOf(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return dark
+        ? (
+            bg: sidebarBackground,
+            text: sidebarText,
+            textSelected: Colors.white,
+            muted: Colors.white38,
+            divider: Colors.white12,
+            chip: const Color(0x0FFFFFFF),
+          )
+        : (
+            bg: const Color(0xFFF3F1FA),
+            text: const Color(0xFF4B4560),
+            textSelected: const Color(0xFF1D1929),
+            muted: const Color(0x994B4560),
+            divider: Colors.black12,
+            chip: const Color(0x0D1D1929),
+          );
+  }
+
   /// Avatar palette, picked by hash of the sender address.
   static const avatarColors = [
     Color(0xFF6D4AFF),

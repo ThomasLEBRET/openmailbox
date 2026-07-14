@@ -39,31 +39,40 @@ class _EmailListTileState extends State<EmailListTile> {
     final unread = !email.isRead;
     final compact = AppColors.compactOf(context);
 
-    // Floating card (direction A): detached from the background, purple
-    // left edge for unread, accent border when selected.
+    // Floating card (direction A): clearly detached from the background —
+    // border + shadow + gap — with a purple left edge for unread and an
+    // accent outline when selected.
+    final accent = AppColors.accentOf(context);
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 10, vertical: compact ? 2 : 4),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 3 : 5),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: Material(
           color: widget.selected
-              ? scheme.primaryContainer.withValues(alpha: 0.30)
+              ? scheme.primaryContainer.withValues(alpha: 0.35)
               : _hovered
-              ? scheme.surfaceContainerHighest.withValues(alpha: 0.55)
-              : scheme.surfaceContainerLow,
-          elevation: _hovered || widget.selected ? 2 : 0,
-          shadowColor: Colors.black.withValues(alpha: 0.35),
-          borderRadius: BorderRadius.circular(10),
+              ? scheme.surfaceContainerHigh
+              : scheme.surfaceContainer,
+          elevation: _hovered || widget.selected ? 4 : 1.5,
+          shadowColor: Colors.black.withValues(alpha: 0.4),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: widget.selected
+                  ? accent
+                  : scheme.outlineVariant.withValues(alpha: 0.45),
+            ),
+          ),
           child: InkWell(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
             onTap: widget.onTap,
             child: Container(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 border: Border(
                   left: BorderSide(
-                    color: unread ? AppColors.accentOf(context) : Colors.transparent,
+                    color: unread ? accent : Colors.transparent,
                     width: 3,
                   ),
                 ),
