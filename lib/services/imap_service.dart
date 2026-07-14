@@ -1,4 +1,5 @@
 import 'package:enough_mail/enough_mail.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/config.dart';
 import '../models/email.dart';
@@ -19,6 +20,17 @@ class ImapService {
   Future<ImapClient>? _connecting;
 
   static const _connectTimeout = Duration(seconds: 15);
+
+  /// Times an operation and logs its duration — diagnosis aid for slow
+  /// servers. Never logs credentials or message content.
+  Future<T> _timed<T>(String label, Future<T> Function() op) async {
+    final watch = Stopwatch()..start();
+    try {
+      return await op();
+    } finally {
+      debugPrint('[IMAP] $label: ${watch.elapsedMilliseconds}ms');
+    }
+  }
 
   Future<ImapClient> ensureConnected(
       ImapConfig config, String password) async {
@@ -48,10 +60,14 @@ class ImapService {
     await disconnect();
 
     final fresh = ImapClient(isLogEnabled: false);
-    await fresh
-        .connectToServer(config.host, config.port, isSecure: true)
-        .timeout(_connectTimeout);
-    await fresh.login(config.username, password).timeout(_connectTimeout);
+    await _timed(
+        'connect+login',
+        () async {
+          await fresh
+              .connectToServer(config.host, config.port, isSecure: true)
+              .timeout(_connectTimeout);
+          await fresh.login(config.username, password).timeout(_connectTimeout);
+        });
     _client = fresh;
     _connectedConfig = config;
     _connectedPassword = password;
@@ -105,31 +121,58 @@ class ImapService {
     if (!forceRefresh && _selectedPath == path && cached != null) {
       return cached;
     }
-    final box = await client.selectMailboxByPath(path);
+    final box =
+        await _timed('select $path', () => client.selectMailboxByPath(path));
     _selectedPath = path;
     _selectedBox = box;
     return box;
   }
 
   /// Lists selectable folders with their message counts.
-  /// The STATUS commands are pipelined on the single connection.
+  ///
+  /// Uses LIST-STATUS (RFC 5819) when the server supports it — one round
+  /// trip for everything. The per-folder STATUS fallback is expensive on
+  /// slow servers (Mailo: ~330ms per folder).
   Future<List<Folder>> listFolders() async {
     final client = _requireClient;
-    final mailboxes = await client.listMailboxes();
+
+    if (client.serverInfo.supports('LIST-STATUS')) {
+      final mailboxes = await _timed(
+        'list-status',
+        () => client.listMailboxes(
+          returnOptions: [
+            ReturnOption.status(['MESSAGES', 'UNSEEN']),
+          ],
+        ),
+      );
+      return [
+        for (final box in mailboxes.where((b) => !b.isNotSelectable))
+          Folder(
+            name: box.name,
+            path: box.path,
+            total: box.messagesExists,
+            unread: box.messagesUnseen,
+          ),
+      ];
+    }
+
+    final mailboxes = await _timed('list', () => client.listMailboxes());
     final selectable =
         mailboxes.where((box) => !box.isNotSelectable).toList();
 
-    final statuses = await Future.wait(selectable.map((box) async {
-      try {
-        final status = await client.statusMailbox(
-          box,
-          [StatusFlags.messages, StatusFlags.unseen],
-        );
-        return (status.messagesExists, status.messagesUnseen);
-      } catch (_) {
-        return (0, 0); // STATUS is optional per folder.
-      }
-    }));
+    final statuses = await _timed(
+        'status x${selectable.length}',
+        () => Future.wait(selectable.map((box) async {
+              try {
+                final status = await client.statusMailbox(
+                  box,
+                  [StatusFlags.messages, StatusFlags.unseen],
+                );
+                return (status.messagesExists, status.messagesUnseen);
+              } catch (_) {
+                return (0, 0); // STATUS is optional per folder.
+              }
+            })));
 
     return [
       for (var i = 0; i < selectable.length; i++)
@@ -154,9 +197,12 @@ class ImapService {
     final box = await _select(folderPath, forceRefresh: true);
     if (box.messagesExists == 0) return [];
 
-    final result = await client.fetchRecentMessages(
-      messageCount: count,
-      criteria: '(UID FLAGS ENVELOPE)',
+    final result = await _timed(
+      'fetch envelopes',
+      () => client.fetchRecentMessages(
+        messageCount: count,
+        criteria: '(UID FLAGS ENVELOPE)',
+      ),
     );
     return result.messages.map((message) {
       final envelope = message.envelope;
@@ -178,16 +224,47 @@ class ImapService {
     }).toList();
   }
 
-  /// Fetches the full body of a single message by UID for the reader panel.
-  Future<MimeMessage> fetchFullMessage(String folderPath, int uid) async {
+  /// Fetches the readable text of a single message for the reader panel.
+  ///
+  /// Fetches BODYSTRUCTURE first, then only the text/plain (or text/html)
+  /// part — never the attachments. `BODY.PEEK[]` would download the whole
+  /// raw message, which makes opening any email with attachments crawl.
+  Future<MimeMessage> fetchMessageText(String folderPath, int uid) async {
     final client = _requireClient;
     await _select(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
-    final result = await client.uidFetchMessages(sequence, 'BODY.PEEK[]');
-    if (result.messages.isEmpty) {
+
+    final structureResult = await _timed('fetch bodystructure',
+        () => client.uidFetchMessages(sequence, '(BODYSTRUCTURE)'));
+    if (structureResult.messages.isEmpty) {
       throw StateError('Message introuvable (UID $uid)');
     }
-    return result.messages.first;
+    final message = structureResult.messages.first;
+    final body = message.body;
+    final textPart = body?.findFirst(MediaSubtype.textPlain) ??
+        body?.findFirst(MediaSubtype.textHtml);
+    final fetchId = textPart?.fetchId;
+
+    if (body == null || fetchId == null) {
+      // No parseable structure — fall back to the full raw message.
+      final full = await _timed('fetch full body (fallback)',
+          () => client.uidFetchMessages(sequence, 'BODY.PEEK[]'));
+      if (full.messages.isEmpty) {
+        throw StateError('Message introuvable (UID $uid)');
+      }
+      return full.messages.first;
+    }
+
+    final partResult = await _timed('fetch part $fetchId',
+        () => client.uidFetchMessages(sequence, '(BODY.PEEK[$fetchId])'));
+    final fetchedPart = partResult.messages.isNotEmpty
+        ? partResult.messages.first.getPart(fetchId)
+        : null;
+    if (fetchedPart == null) {
+      throw StateError('Partie du message introuvable ($fetchId)');
+    }
+    message.setPart(fetchId, fetchedPart);
+    return message;
   }
 
   Future<void> markSeen(String folderPath, int uid, {bool isSeen = true}) async {

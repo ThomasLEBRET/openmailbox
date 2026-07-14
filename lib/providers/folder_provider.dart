@@ -41,14 +41,20 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
   }
 
   /// Re-lists folders (with STATUS counts) and refreshes the local cache.
+  /// The sidebar keeps showing the current list while this runs; a
+  /// transient failure keeps it too (badges catch up on the next pass).
   Future<void> refresh() async {
-    state = const AsyncLoading<List<Folder>>();
-    state = await AsyncValue.guard(() async {
-      final folders =
-          await withImapSession(ref, (imap) => imap.listFolders());
+    final result = await AsyncValue.guard(() async {
+      final folders = await withImapSession(
+          ref, (imap) => imap.listFolders(),
+          background: true);
       await ref.read(storageServiceProvider).saveFolders(folders);
       return folders;
     });
+    if (result.hasError && (state.value?.isNotEmpty ?? false)) {
+      return;
+    }
+    state = result;
   }
 
   /// Optimistically shifts the counts of [path] (e.g. unread -1 when an

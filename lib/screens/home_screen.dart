@@ -26,10 +26,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      ref.read(folderListProvider.notifier).refresh();
-      ref.read(emailListProvider.notifier).sync();
-    });
+    Future.microtask(_refreshAll);
+  }
+
+  /// Emails and folder counts refresh in parallel — they run on two
+  /// separate IMAP connections so neither delays the other.
+  Future<void> _refreshAll() async {
+    await Future.wait([
+      ref.read(emailListProvider.notifier).sync(),
+      ref.read(folderListProvider.notifier).refresh(),
+    ]);
   }
 
   Future<void> _openEmail(Email email) async {
@@ -77,8 +83,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
     if (saved == true && mounted) {
-      ref.read(folderListProvider.notifier).refresh();
-      ref.read(emailListProvider.notifier).sync();
+      await _refreshAll();
     }
   }
 
@@ -254,7 +259,8 @@ class _EmailListHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
-    final isSyncing = ref.watch(emailListProvider).isLoading;
+    final isSyncing = ref.watch(emailListProvider).isLoading ||
+        ref.watch(emailSyncingProvider);
     final currentPath = ref.watch(currentFolderProvider);
     final folder = ref
         .watch(folderListProvider)

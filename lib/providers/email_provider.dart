@@ -5,6 +5,18 @@ import 'config_provider.dart';
 import 'folder_provider.dart';
 import 'imap_session.dart';
 
+/// True while a server sync of the email list is in flight. Drives the
+/// header spinner without blanking the cached list.
+class EmailSyncingNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) => state = value;
+}
+
+final emailSyncingProvider =
+    NotifierProvider<EmailSyncingNotifier, bool>(EmailSyncingNotifier.new);
+
 /// Email list for the currently selected folder ([currentFolderProvider]).
 class EmailListNotifier extends AsyncNotifier<List<Email>> {
   @override
@@ -15,22 +27,27 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   }
 
   /// Pulls the latest messages for the current folder and refreshes the
-  /// local cache.
+  /// local cache. The cached list stays visible while the sync runs —
+  /// blanking it to a spinner made every refresh feel slow.
   Future<void> sync() async {
-    state = const AsyncLoading<List<Email>>();
-    state = await AsyncValue.guard(() async {
+    ref.read(emailSyncingProvider.notifier).set(true);
+    try {
       final folder = ref.read(currentFolderProvider);
-      final emails = await withImapSession(
-          ref, (imap) => imap.fetchRecentMessages(folder));
-      await ref.read(storageServiceProvider).saveEmails(emails);
-      return emails;
-    });
+      state = await AsyncValue.guard(() async {
+        final emails = await withImapSession(
+            ref, (imap) => imap.fetchRecentMessages(folder));
+        await ref.read(storageServiceProvider).saveEmails(emails);
+        return emails;
+      });
+    } finally {
+      ref.read(emailSyncingProvider.notifier).set(false);
+    }
   }
 
-  /// Fetches the full body of one email for the reader panel.
+  /// Fetches the readable text of one email for the reader panel.
   Future<String> fetchBody(Email email) async {
     final message = await withImapSession(
-        ref, (imap) => imap.fetchFullMessage(email.folder, email.uid));
+        ref, (imap) => imap.fetchMessageText(email.folder, email.uid));
     return message.decodeTextPlainPart() ??
         message.decodeTextHtmlPart() ??
         '(corps vide)';

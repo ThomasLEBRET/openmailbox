@@ -3,16 +3,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/imap_service.dart';
 import 'config_provider.dart';
 
-/// Single persistent IMAP connection for the whole app.
+/// Persistent IMAP connection for interactive work (list, open, flags).
 final imapServiceProvider = Provider<ImapService>((ref) => ImapService());
 
-/// Runs [action] on the shared IMAP connection, connecting if needed.
+/// Second persistent connection for slow background work (folder STATUS
+/// storms on servers without LIST-STATUS) so user actions never queue
+/// behind it.
+final imapBackgroundServiceProvider =
+    Provider<ImapService>((ref) => ImapService());
+
+/// Runs [action] on a shared IMAP connection, connecting if needed.
 /// On failure the connection is reset and the action retried once —
 /// idle sessions are routinely dropped by servers.
 Future<T> withImapSession<T>(
   Ref ref,
-  Future<T> Function(ImapService imap) action,
-) async {
+  Future<T> Function(ImapService imap) action, {
+  bool background = false,
+}) async {
   final config = ref.read(accountConfigProvider).value;
   if (config == null) {
     throw StateError('Aucun compte configuré');
@@ -26,7 +33,8 @@ Future<T> withImapSession<T>(
     );
   }
 
-  final imap = ref.read(imapServiceProvider);
+  final imap = ref.read(
+      background ? imapBackgroundServiceProvider : imapServiceProvider);
   await imap.ensureConnected(config.imap, password);
   try {
     return await action(imap);
