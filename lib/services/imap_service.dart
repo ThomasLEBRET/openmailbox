@@ -279,10 +279,14 @@ class ImapService {
 
   /// Fetches the readable text of a single message for the reader panel.
   ///
-  /// Fetches BODYSTRUCTURE first, then only the text/plain (or text/html)
+  /// Fetches BODYSTRUCTURE first, then only the text/html (or text/plain)
   /// part — never the attachments. `BODY.PEEK[]` would download the whole
   /// raw message, which makes opening any email with attachments crawl.
-  Future<MimeMessage> fetchMessageText(String folderPath, int uid) async {
+  ///
+  /// The second field says which part was fetched: true = text/html,
+  /// false = text/plain, null = full-message fallback (caller decides).
+  Future<(MimeMessage, bool?)> fetchMessageText(
+      String folderPath, int uid) async {
     final client = _requireClient;
     await _select(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
@@ -296,8 +300,8 @@ class ImapService {
     final body = message.body;
     // HTML first: it's the authored version of most emails and the
     // reader renders it; plain text is the fallback.
-    final textPart = body?.findFirst(MediaSubtype.textHtml) ??
-        body?.findFirst(MediaSubtype.textPlain);
+    final htmlPart = body?.findFirst(MediaSubtype.textHtml);
+    final textPart = htmlPart ?? body?.findFirst(MediaSubtype.textPlain);
     final fetchId = textPart?.fetchId;
 
     if (body == null || fetchId == null) {
@@ -307,7 +311,7 @@ class ImapService {
       if (full.messages.isEmpty) {
         throw StateError('Message introuvable (UID $uid)');
       }
-      return full.messages.first;
+      return (full.messages.first, null);
     }
 
     final partResult = await _timed('fetch part $fetchId',
@@ -319,7 +323,7 @@ class ImapService {
       throw StateError('Partie du message introuvable ($fetchId)');
     }
     message.setPart(fetchId, fetchedPart);
-    return message;
+    return (message, htmlPart != null);
   }
 
   Future<void> markSeen(String folderPath, int uid, {bool isSeen = true}) async {

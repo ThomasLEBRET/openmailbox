@@ -52,19 +52,50 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     }
   }
 
+  /// Some senders declare HTML content as text/plain; without this the
+  /// reader shows raw HTML source as text.
+  static bool _looksLikeHtml(String body) {
+    final head = body.trimLeft().toLowerCase();
+    return head.startsWith('<!doctype') || head.startsWith('<html');
+  }
+
   /// Returns the readable body of one email and whether it is HTML.
   /// Bodies are cached in SQLite: re-opening an email is instant.
   Future<(String, bool)> fetchBody(Email email) async {
     final storage = ref.read(storageServiceProvider);
     final cached = await storage.loadBody(email.folder, email.uid);
-    if (cached != null) return cached;
+    if (cached != null) {
+      final (body, isHtml) = cached;
+      if (!isHtml && _looksLikeHtml(body)) {
+        // Heal rows cached with a wrong flag by earlier versions.
+        await storage.saveBody(email.folder, email.uid, body, isHtml: true);
+        return (body, true);
+      }
+      return cached;
+    }
 
-    final message = await withImapSession(
+    final (message, htmlPartFetched) = await withImapSession(
         ref, (imap) => imap.fetchMessageText(email.folder, email.uid));
-    final html = message.decodeTextHtmlPart();
-    final (body, isHtml) = html != null
-        ? (html, true)
-        : (message.decodeTextPlainPart() ?? '(corps vide)', false);
+
+    String body;
+    bool isHtml;
+    if (htmlPartFetched == true) {
+      body = message.decodeTextHtmlPart() ??
+          message.decodeTextPlainPart() ??
+          '(corps vide)';
+      isHtml = true;
+    } else {
+      final html = htmlPartFetched == null ? message.decodeTextHtmlPart() : null;
+      if (html != null) {
+        body = html;
+        isHtml = true;
+      } else {
+        body = message.decodeTextPlainPart() ??
+            message.decodeTextHtmlPart() ??
+            '(corps vide)';
+        isHtml = _looksLikeHtml(body);
+      }
+    }
     await storage.saveBody(email.folder, email.uid, body, isHtml: isHtml);
     return (body, isHtml);
   }

@@ -110,11 +110,23 @@ class StorageService {
         }
         if (oldVersion < 3) {
           // v3 caches fetched message bodies for instant re-opening and
-          // stores the sender's bare address for replies.
-          await db.execute('ALTER TABLE emails ADD COLUMN body TEXT');
-          await db.execute('ALTER TABLE emails ADD COLUMN bodyIsHtml INTEGER');
-          await db.execute(
-              "ALTER TABLE emails ADD COLUMN fromEmail TEXT NOT NULL DEFAULT ''");
+          // stores the sender's bare address for replies. Idempotent: a
+          // partially applied run (e.g. two app instances migrating at
+          // once) must not fail forever on "duplicate column".
+          final columns = (await db.rawQuery('PRAGMA table_info(emails)'))
+              .map((row) => row['name'] as String)
+              .toSet();
+          if (!columns.contains('body')) {
+            await db.execute('ALTER TABLE emails ADD COLUMN body TEXT');
+          }
+          if (!columns.contains('bodyIsHtml')) {
+            await db
+                .execute('ALTER TABLE emails ADD COLUMN bodyIsHtml INTEGER');
+          }
+          if (!columns.contains('fromEmail')) {
+            await db.execute(
+                "ALTER TABLE emails ADD COLUMN fromEmail TEXT NOT NULL DEFAULT ''");
+          }
         }
       },
     );
