@@ -19,12 +19,14 @@ class FolderSidebar extends ConsumerWidget {
     required this.onCompose,
     required this.onOpenSettings,
     required this.onAddAccount,
+    this.onOpenAppearance,
     this.onFolderSelected,
   });
 
   final VoidCallback onCompose;
   final VoidCallback onOpenSettings;
   final VoidCallback onAddAccount;
+  final VoidCallback? onOpenAppearance;
 
   /// Called after a folder tap (used to close the drawer on mobile).
   final VoidCallback? onFolderSelected;
@@ -113,7 +115,7 @@ class FolderSidebar extends ConsumerWidget {
               child: FilledButton.icon(
                 onPressed: onCompose,
                 style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.primary,
+                  backgroundColor: AppColors.accentOf(context),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
@@ -186,6 +188,16 @@ class FolderSidebar extends ConsumerWidget {
             const Divider(color: Colors.white12),
             ListTile(
               dense: true,
+              leading: const Icon(Icons.palette_outlined,
+                  color: AppColors.sidebarText, size: 20),
+              title: const Text(
+                'Apparence',
+                style: TextStyle(color: AppColors.sidebarText, fontSize: 14),
+              ),
+              onTap: onOpenAppearance,
+            ),
+            ListTile(
+              dense: true,
               leading: const Icon(Icons.settings_outlined,
                   color: AppColors.sidebarText, size: 20),
               title: const Text(
@@ -248,7 +260,7 @@ class _AccountSwitcher extends ConsumerWidget {
                         : Icons.radio_button_off,
                     size: 16,
                     color: account.id == current.id
-                        ? AppColors.primary
+                        ? AppColors.accentOf(context)
                         : null,
                   ),
                   const SizedBox(width: 8),
@@ -344,7 +356,7 @@ class _FolderTile extends StatelessWidget {
         waitDuration: const Duration(milliseconds: 600),
         child: Material(
           color: selected
-              ? AppColors.primary.withValues(alpha: 0.35)
+              ? AppColors.accentOf(context).withValues(alpha: 0.35)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
@@ -385,7 +397,7 @@ class _FolderTile extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
-                        color: AppColors.primary,
+                        color: AppColors.accentOf(context),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(

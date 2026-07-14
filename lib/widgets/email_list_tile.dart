@@ -37,11 +37,12 @@ class _EmailListTileState extends State<EmailListTile> {
     final sender = email.from.isEmpty ? '?' : email.from;
     final initial = sender[0].toUpperCase();
     final unread = !email.isRead;
+    final compact = AppColors.compactOf(context);
 
     // Floating card (direction A): detached from the background, purple
     // left edge for unread, accent border when selected.
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: compact ? 2 : 4),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -62,12 +63,13 @@ class _EmailListTileState extends State<EmailListTile> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border(
                   left: BorderSide(
-                    color: unread ? AppColors.primary : Colors.transparent,
+                    color: unread ? AppColors.accentOf(context) : Colors.transparent,
                     width: 3,
                   ),
                 ),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+              padding: EdgeInsets.symmetric(
+                  horizontal: 13, vertical: compact ? 6 : 11),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -119,7 +121,7 @@ class _EmailListTileState extends State<EmailListTile> {
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   color: unread
-                                      ? AppColors.primary
+                                      ? AppColors.accentOf(context)
                                       : scheme.onSurfaceVariant,
                                   fontWeight: unread
                                       ? FontWeight.w600
@@ -150,15 +152,15 @@ class _EmailListTileState extends State<EmailListTile> {
                               Container(
                                 width: 8,
                                 height: 8,
-                                decoration: const BoxDecoration(
-                                  color: AppColors.primary,
+                                decoration: BoxDecoration(
+                                  color: AppColors.accentOf(context),
                                   shape: BoxShape.circle,
                                 ),
                               ),
                             ],
                           ],
                         ),
-                        if (email.preview.trim().isNotEmpty) ...[
+                        if (!compact && email.preview.trim().isNotEmpty) ...[
                           const SizedBox(height: 2),
                           Text(
                             email.preview

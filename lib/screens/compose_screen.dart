@@ -308,7 +308,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                     FilledButton.icon(
                       onPressed: _isSending ? null : _send,
                       style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primary,
+                        backgroundColor: AppColors.accentOf(context),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 24, vertical: 14),
@@ -377,7 +377,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                 ),
               ),
               focusedBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: AppColors.primary),
+                borderSide: BorderSide(color: AppColors.accentOf(context)),
               ),
               contentPadding: const EdgeInsets.symmetric(vertical: 12),
             ),

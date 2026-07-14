@@ -10,6 +10,7 @@ import '../models/account.dart';
 import '../models/config.dart';
 import '../models/email.dart';
 import '../models/folder.dart';
+import '../models/prefs.dart';
 
 /// Persists everything the app needs locally:
 /// - per-account credentials, in encrypted secure storage (never logged)
@@ -94,6 +95,25 @@ class StorageService {
     await saveAccounts(state);
     await legacy.delete();
     return state;
+  }
+
+  // --- UI preferences (non-secret) ------------------------------------------
+
+  Future<void> savePrefs(AppPrefs prefs) async {
+    final file = await _fileIn('prefs.json');
+    await file.writeAsString(jsonEncode(prefs.toJson()));
+  }
+
+  Future<AppPrefs> loadPrefs() async {
+    final file = await _fileIn('prefs.json');
+    if (!file.existsSync()) return const AppPrefs();
+    try {
+      return AppPrefs.fromJson(
+        jsonDecode(await file.readAsString()) as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return const AppPrefs();
+    }
   }
 
   // --- SQLite: email metadata + folders, scoped by account -----------------

@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'models/prefs.dart';
 import 'providers/config_provider.dart';
+import 'providers/prefs_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/setup_screen.dart';
 import 'theme.dart';
@@ -18,15 +20,19 @@ void main() {
   runApp(const ProviderScope(child: OpenMailboxApp()));
 }
 
-class OpenMailboxApp extends StatelessWidget {
+class OpenMailboxApp extends ConsumerWidget {
   const OpenMailboxApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final prefs = ref.watch(prefsProvider).value ?? const AppPrefs();
     return MaterialApp(
       title: 'OpenMailbox',
-      theme: buildTheme(Brightness.light),
-      darkTheme: buildTheme(Brightness.dark),
+      themeMode: prefs.materialThemeMode,
+      theme: buildTheme(Brightness.light,
+          accent: prefs.accent, compact: prefs.compact),
+      darkTheme: buildTheme(Brightness.dark,
+          accent: prefs.accent, compact: prefs.compact),
       home: const _RootScreen(),
     );
   }

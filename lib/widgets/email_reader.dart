@@ -167,8 +167,8 @@ class EmailReader extends StatelessWidget {
         text: content,
         onOpen: (link) => _openLink(link.url),
         style: const TextStyle(fontSize: 14, height: 1.6),
-        linkStyle: const TextStyle(
-          color: AppColors.primary,
+        linkStyle: TextStyle(
+          color: AppColors.accentOf(context),
           decoration: TextDecoration.none,
         ),
       ),

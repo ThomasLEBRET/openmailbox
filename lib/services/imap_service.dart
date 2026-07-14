@@ -353,6 +353,57 @@ class ImapService {
     }
   }
 
+  static const _prefsFolder = 'OpenMailbox_Prefs';
+
+  /// Reads the last synced preferences JSON from the dedicated folder,
+  /// or null when none exists yet.
+  Future<String?> fetchPrefsJson() async {
+    final client = _requireClient;
+    final Mailbox box;
+    try {
+      box = await client.selectMailboxByPath(_prefsFolder);
+    } catch (_) {
+      return null; // Folder doesn't exist yet — nothing synced.
+    }
+    _selectedPath = _prefsFolder;
+    _selectedBox = box;
+    if (box.messagesExists == 0) return null;
+    final result = await client.fetchRecentMessages(
+      messageCount: 1,
+      criteria: 'BODY.PEEK[]',
+    );
+    if (result.messages.isEmpty) return null;
+    return result.messages.last.decodeTextPlainPart();
+  }
+
+  /// Stores the preferences JSON as the sole message of the dedicated
+  /// folder (creates it on first use, purges previous versions).
+  Future<void> pushPrefsJson(String json) async {
+    final client = _requireClient;
+    try {
+      await client.createMailbox(_prefsFolder);
+    } catch (_) {
+      // Already exists.
+    }
+    final message = MessageBuilder.buildSimpleTextMessage(
+      const MailAddress('OpenMailbox', 'prefs@openmailbox.local'),
+      [const MailAddress('OpenMailbox', 'prefs@openmailbox.local')],
+      json,
+      subject: 'OpenMailbox preferences',
+    );
+    await client.appendMessage(message, targetMailboxPath: _prefsFolder);
+    // Keep only the newest message.
+    final box = await client.selectMailboxByPath(_prefsFolder);
+    _selectedPath = _prefsFolder;
+    _selectedBox = box;
+    if (box.messagesExists > 1) {
+      final sequence =
+          MessageSequence.fromRange(1, box.messagesExists - 1);
+      await client.store(sequence, [r'\Deleted']);
+      await client.expunge();
+    }
+  }
+
   /// Permanently deletes a message (used inside the trash folder).
   Future<void> deleteMessage(String folderPath, int uid) async {
     final client = _requireClient;

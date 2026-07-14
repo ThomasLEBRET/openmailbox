@@ -9,6 +9,7 @@ import '../providers/folder_provider.dart';
 import '../widgets/email_list_tile.dart';
 import '../widgets/email_reader.dart';
 import '../widgets/folder_sidebar.dart';
+import 'appearance_dialog.dart';
 import 'compose_screen.dart';
 import 'setup_screen.dart';
 
@@ -232,6 +233,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       onAddAccount: () {
         if (!isDesktop) Navigator.of(context).maybePop();
         _addAccount();
+      },
+      onOpenAppearance: () {
+        if (!isDesktop) Navigator.of(context).maybePop();
+        showDialog<void>(
+          context: context,
+          builder: (_) => const AppearanceDialog(),
+        );
       },
       onFolderSelected: isDesktop
           ? null

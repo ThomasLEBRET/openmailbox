@@ -1,5 +1,26 @@
 import 'package:flutter/material.dart';
 
+/// Customizable style values carried through the theme so every widget
+/// (Stateful or Consumer) reads them the same way.
+class AppStyle extends ThemeExtension<AppStyle> {
+  const AppStyle({required this.accent, required this.compact});
+
+  final Color accent;
+  final bool compact;
+
+  @override
+  AppStyle copyWith({Color? accent, bool? compact}) =>
+      AppStyle(accent: accent ?? this.accent, compact: compact ?? this.compact);
+
+  @override
+  AppStyle lerp(AppStyle? other, double t) => other == null
+      ? this
+      : AppStyle(
+          accent: Color.lerp(accent, other.accent, t) ?? accent,
+          compact: t < 0.5 ? compact : other.compact,
+        );
+}
+
 /// Design tokens for the ProtonMail-inspired look: deep purple accent,
 /// dark aubergine sidebar, generous whitespace.
 abstract class AppColors {
@@ -7,6 +28,13 @@ abstract class AppColors {
   static const sidebarBackground = Color(0xFF1E1A2E);
   static const sidebarText = Color(0xB3FFFFFF); // white 70%
   static const sidebarTextSelected = Colors.white;
+
+  /// The user-chosen accent (falls back to the brand purple).
+  static Color accentOf(BuildContext context) =>
+      Theme.of(context).extension<AppStyle>()?.accent ?? primary;
+
+  static bool compactOf(BuildContext context) =>
+      Theme.of(context).extension<AppStyle>()?.compact ?? false;
 
   /// Avatar palette, picked by hash of the sender address.
   static const avatarColors = [
@@ -24,14 +52,22 @@ abstract class AppColors {
       avatarColors[seed.hashCode.abs() % avatarColors.length];
 }
 
-ThemeData buildTheme(Brightness brightness) {
+ThemeData buildTheme(
+  Brightness brightness, {
+  Color accent = AppColors.primary,
+  bool compact = false,
+}) {
   final scheme = ColorScheme.fromSeed(
-    seedColor: AppColors.primary,
+    seedColor: accent,
     brightness: brightness,
   );
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
+    extensions: [AppStyle(accent: accent, compact: compact)],
+    visualDensity: compact
+        ? const VisualDensity(horizontal: -1, vertical: -2)
+        : VisualDensity.standard,
     scaffoldBackgroundColor:
         brightness == Brightness.light ? Colors.white : const Color(0xFF16141F),
     dividerTheme: DividerThemeData(
