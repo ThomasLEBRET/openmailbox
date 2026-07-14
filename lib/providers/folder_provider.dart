@@ -1,10 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/folder.dart';
-import '../services/imap_service.dart';
 import 'config_provider.dart';
-
-final imapServiceProvider = Provider<ImapService>((ref) => ImapService());
+import 'imap_session.dart';
 
 /// Currently selected folder path (defaults to INBOX).
 class CurrentFolderNotifier extends Notifier<String> {
@@ -17,6 +15,24 @@ class CurrentFolderNotifier extends Notifier<String> {
 final currentFolderProvider =
     NotifierProvider<CurrentFolderNotifier, String>(CurrentFolderNotifier.new);
 
+/// Best-effort trash folder path. Prefers the server's lowercase system
+/// folder when several trash-like folders exist (Mailo has both "trash"
+/// and a user-created "Trash").
+String? findTrashPath(List<Folder> folders) {
+  Folder? byName;
+  for (final folder in folders) {
+    if (folder.path == 'trash') return folder.path;
+    final name = folder.name.toLowerCase();
+    if (folder.path.toLowerCase() == 'trash' ||
+        name.contains('trash') ||
+        name.contains('corbeille') ||
+        name.contains('deleted')) {
+      byName ??= folder;
+    }
+  }
+  return byName?.path;
+}
+
 class FolderListNotifier extends AsyncNotifier<List<Folder>> {
   @override
   Future<List<Folder>> build() async {
@@ -24,39 +40,21 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
     return storage.loadFolders();
   }
 
-  /// Connects to IMAP, re-lists folders and refreshes the local cache.
+  /// Re-lists folders (with STATUS counts) and refreshes the local cache.
   Future<void> refresh() async {
     state = const AsyncLoading<List<Folder>>();
     state = await AsyncValue.guard(() async {
-      final config = ref.read(accountConfigProvider).value;
-      if (config == null) {
-        throw StateError('Aucun compte configuré');
-      }
-
-      final storage = ref.read(storageServiceProvider);
-      final password = await storage.readImapPassword();
-      if (password == null) {
-        throw StateError(
-          'Mot de passe IMAP introuvable dans le trousseau (Keychain). '
-          'Reconfigure le compte depuis les réglages.',
-        );
-      }
-
-      final imap = ref.read(imapServiceProvider);
-      await imap.connect(config.imap, password);
-      try {
-        final folders = await imap.listFolders();
-        await storage.saveFolders(folders);
-        return folders;
-      } finally {
-        await imap.disconnect();
-      }
+      final folders =
+          await withImapSession(ref, (imap) => imap.listFolders());
+      await ref.read(storageServiceProvider).saveFolders(folders);
+      return folders;
     });
   }
 
-  /// Optimistically shifts the unread count of [path] (e.g. -1 when an
+  /// Optimistically shifts the counts of [path] (e.g. unread -1 when an
   /// email is read locally) so badges stay coherent between two syncs.
-  Future<void> adjustCounts(String path, {int unreadDelta = 0, int totalDelta = 0}) async {
+  Future<void> adjustCounts(String path,
+      {int unreadDelta = 0, int totalDelta = 0}) async {
     final current = state.value;
     if (current == null) return;
     final updated = [

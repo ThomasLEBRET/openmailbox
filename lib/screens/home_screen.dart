@@ -37,32 +37,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _selected = email;
       _selectedBody = null;
     });
-    if (!email.isRead) {
-      await ref.read(emailListProvider.notifier).markRead(email.uid, true);
-    }
 
-    final config = ref.read(accountConfigProvider).value;
-    final storage = ref.read(storageServiceProvider);
-    final password = await storage.readImapPassword();
-    if (config == null || password == null) return;
-
-    final imap = ref.read(imapServiceProvider);
     try {
-      await imap.connect(config.imap, password);
-      final message = await imap.fetchFullMessage(email.folder, email.uid);
+      // Body first — it's what the user is waiting for; the read-flag
+      // push happens afterwards on the same connection.
+      final body =
+          await ref.read(emailListProvider.notifier).fetchBody(email);
       if (mounted && _selected?.uid == email.uid) {
-        setState(() {
-          _selectedBody = message.decodeTextPlainPart() ??
-              message.decodeTextHtmlPart() ??
-              '(corps vide)';
-        });
+        setState(() => _selectedBody = body);
       }
     } catch (e) {
       if (mounted && _selected?.uid == email.uid) {
         setState(() => _selectedBody = 'Erreur de chargement : $e');
       }
-    } finally {
-      await imap.disconnect();
+    }
+
+    if (!email.isRead) {
+      await ref.read(emailListProvider.notifier).markRead(email.uid, true);
     }
   }
 

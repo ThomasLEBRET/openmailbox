@@ -46,15 +46,18 @@ class SmtpService {
     if (client == null) {
       throw StateError('SmtpService.connect() must be called first');
     }
-    final message = MessageBuilder.prepareMultipartAlternativeMessage(
-      plainText: body,
-    )
-      ..from = [from]
-      ..to = to
-      ..cc = cc
-      ..bcc = bcc
-      ..subject = subject;
+    // Single-part text/plain. prepareMultipartAlternativeMessage without
+    // htmlText renders a multipart envelope with NO body parts, which
+    // recipients (e.g. ProtonMail) reject as an invalid message.
+    final message = MessageBuilder.buildSimpleTextMessage(
+      from,
+      to,
+      body,
+      cc: cc,
+      bcc: bcc,
+      subject: subject,
+    );
 
-    await client.sendMessage(message.buildMimeMessage());
+    await client.sendMessage(message);
   }
 }

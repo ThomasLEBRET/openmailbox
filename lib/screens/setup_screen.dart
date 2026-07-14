@@ -101,7 +101,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
           await _effectivePassword(_imapPassword.text, storage.readImapPassword);
       final smtpPassword =
           await _effectivePassword(_smtpPassword.text, storage.readSmtpPassword);
-      await imap.connect(_imapConfig, imapPassword);
+      await imap.ensureConnected(_imapConfig, imapPassword);
       await smtp.connect(_smtpConfig, smtpPassword);
       setState(() {
         _statusMessage = 'Connexion IMAP et SMTP réussie.';

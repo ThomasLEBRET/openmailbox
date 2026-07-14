@@ -1,9 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/email.dart';
-import '../services/imap_service.dart';
 import 'config_provider.dart';
 import 'folder_provider.dart';
+import 'imap_session.dart';
 
 /// Email list for the currently selected folder ([currentFolderProvider]).
 class EmailListNotifier extends AsyncNotifier<List<Email>> {
@@ -14,41 +14,26 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     return storage.loadEmails(folder);
   }
 
-  /// Opens an IMAP session, runs [action], always disconnects.
-  Future<T> _withImap<T>(Future<T> Function(ImapService imap) action) async {
-    final config = ref.read(accountConfigProvider).value;
-    if (config == null) {
-      throw StateError('Aucun compte configuré');
-    }
-    final storage = ref.read(storageServiceProvider);
-    final password = await storage.readImapPassword();
-    if (password == null) {
-      throw StateError(
-        'Mot de passe IMAP introuvable dans le trousseau (Keychain). '
-        'Reconfigure le compte depuis les réglages.',
-      );
-    }
-    final imap = ref.read(imapServiceProvider);
-    await imap.connect(config.imap, password);
-    try {
-      return await action(imap);
-    } finally {
-      await imap.disconnect();
-    }
-  }
-
-  /// Connects to IMAP, pulls the latest messages for the current folder
-  /// and refreshes the local cache.
+  /// Pulls the latest messages for the current folder and refreshes the
+  /// local cache.
   Future<void> sync() async {
     state = const AsyncLoading<List<Email>>();
     state = await AsyncValue.guard(() async {
       final folder = ref.read(currentFolderProvider);
-      final storage = ref.read(storageServiceProvider);
-      final emails =
-          await _withImap((imap) => imap.fetchRecentMessages(folder));
-      await storage.saveEmails(emails);
+      final emails = await withImapSession(
+          ref, (imap) => imap.fetchRecentMessages(folder));
+      await ref.read(storageServiceProvider).saveEmails(emails);
       return emails;
     });
+  }
+
+  /// Fetches the full body of one email for the reader panel.
+  Future<String> fetchBody(Email email) async {
+    final message = await withImapSession(
+        ref, (imap) => imap.fetchFullMessage(email.folder, email.uid));
+    return message.decodeTextPlainPart() ??
+        message.decodeTextHtmlPart() ??
+        '(corps vide)';
   }
 
   /// Marks locally (snappy UI), then pushes the \Seen flag to the server
@@ -73,15 +58,16 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
           .adjustCounts(folder, unreadDelta: isRead ? -1 : 1);
     }
     try {
-      await _withImap(
-          (imap) => imap.markSeen(folder, uid, isSeen: isRead));
+      await withImapSession(
+          ref, (imap) => imap.markSeen(folder, uid, isSeen: isRead));
     } catch (_) {
       // Best-effort; local state stays, next sync reconciles.
     }
   }
 
-  /// Deletes on the server first (throws on failure so the caller can
-  /// surface it), then locally.
+  /// Moves the email to the trash folder (or deletes permanently when
+  /// already in the trash). Server-first: throws on failure so the caller
+  /// can surface it. Both folders' counts are adjusted locally.
   Future<void> deleteEmail(int uid) async {
     final folder = ref.read(currentFolderProvider);
     final storage = ref.read(storageServiceProvider);
@@ -91,17 +77,35 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
             ?.isRead ==
         false;
 
-    await _withImap((imap) => imap.deleteMessage(folder, uid));
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final trashPath = findTrashPath(folders);
+    final movesToTrash = trashPath != null && folder != trashPath;
+
+    if (movesToTrash) {
+      await withImapSession(
+          ref, (imap) => imap.moveToTrash(folder, uid, trashPath));
+    } else {
+      await withImapSession(ref, (imap) => imap.deleteMessage(folder, uid));
+    }
 
     await storage.deleteEmail(folder, uid);
     state = state.whenData(
       (emails) => emails.where((email) => email.uid != uid).toList(),
     );
-    await ref.read(folderListProvider.notifier).adjustCounts(
-          folder,
-          totalDelta: -1,
-          unreadDelta: wasUnread ? -1 : 0,
-        );
+
+    final folderNotifier = ref.read(folderListProvider.notifier);
+    await folderNotifier.adjustCounts(
+      folder,
+      totalDelta: -1,
+      unreadDelta: wasUnread ? -1 : 0,
+    );
+    if (movesToTrash) {
+      await folderNotifier.adjustCounts(
+        trashPath,
+        totalDelta: 1,
+        unreadDelta: wasUnread ? 1 : 0,
+      );
+    }
   }
 }
 

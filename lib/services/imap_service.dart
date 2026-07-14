@@ -6,63 +6,140 @@ import '../models/folder.dart';
 
 /// Thin wrapper around `enough_mail`'s low-level [ImapClient].
 ///
-/// One [ImapService] instance owns one connection: call [connect] before
-/// any other method, and [disconnect] when done with it.
+/// The connection is persistent: [ensureConnected] reuses the existing
+/// TLS session instead of paying connect+login on every operation.
+/// Call [reset] after a network error so the next call reconnects, and
+/// [disconnect] when the account changes.
 class ImapService {
   ImapClient? _client;
+  ImapConfig? _connectedConfig;
+  String? _connectedPassword;
+  String? _selectedPath;
+  Mailbox? _selectedBox;
+  Future<ImapClient>? _connecting;
 
   static const _connectTimeout = Duration(seconds: 15);
 
-  Future<void> connect(ImapConfig config, String password) async {
-    final client = ImapClient(isLogEnabled: false);
-    await client
+  Future<ImapClient> ensureConnected(
+      ImapConfig config, String password) async {
+    final client = _client;
+    if (client != null &&
+        client.isConnected &&
+        client.isLoggedIn &&
+        _connectedConfig == config &&
+        _connectedPassword == password) {
+      return client;
+    }
+    // Concurrent callers (e.g. folder refresh + email sync at startup)
+    // share one connection attempt instead of opening two sockets.
+    final pending = _connecting;
+    if (pending != null) return pending;
+
+    final attempt = _connect(config, password);
+    _connecting = attempt;
+    try {
+      return await attempt;
+    } finally {
+      _connecting = null;
+    }
+  }
+
+  Future<ImapClient> _connect(ImapConfig config, String password) async {
+    await disconnect();
+
+    final fresh = ImapClient(isLogEnabled: false);
+    await fresh
         .connectToServer(config.host, config.port, isSecure: true)
         .timeout(_connectTimeout);
-    await client.login(config.username, password).timeout(_connectTimeout);
-    _client = client;
+    await fresh.login(config.username, password).timeout(_connectTimeout);
+    _client = fresh;
+    _connectedConfig = config;
+    _connectedPassword = password;
+    _selectedPath = null;
+    _selectedBox = null;
+    return fresh;
+  }
+
+  /// Drops the connection so the next [ensureConnected] starts clean.
+  /// Used after errors where the session state is unknown.
+  void reset() {
+    final client = _client;
+    _client = null;
+    _connectedConfig = null;
+    _connectedPassword = null;
+    _selectedPath = null;
+    _selectedBox = null;
+    // Fire-and-forget: the socket may already be dead.
+    client?.disconnect().catchError((_) {});
   }
 
   Future<void> disconnect() async {
-    await _client?.logout();
+    final client = _client;
     _client = null;
+    _connectedConfig = null;
+    _connectedPassword = null;
+    _selectedPath = null;
+    _selectedBox = null;
+    if (client != null) {
+      try {
+        await client.logout();
+      } catch (_) {
+        // Socket already gone — nothing to clean up.
+      }
+    }
   }
 
   ImapClient get _requireClient {
     final client = _client;
     if (client == null) {
-      throw StateError('ImapService.connect() must be called first');
+      throw StateError('ImapService.ensureConnected() must be called first');
     }
     return client;
   }
 
-  /// Lists selectable folders with their message counts
-  /// (one IMAP STATUS per folder).
+  /// Selects [path] unless it is already the active mailbox.
+  /// [forceRefresh] re-selects to get fresh message counts.
+  Future<Mailbox> _select(String path, {bool forceRefresh = false}) async {
+    final client = _requireClient;
+    final cached = _selectedBox;
+    if (!forceRefresh && _selectedPath == path && cached != null) {
+      return cached;
+    }
+    final box = await client.selectMailboxByPath(path);
+    _selectedPath = path;
+    _selectedBox = box;
+    return box;
+  }
+
+  /// Lists selectable folders with their message counts.
+  /// The STATUS commands are pipelined on the single connection.
   Future<List<Folder>> listFolders() async {
     final client = _requireClient;
     final mailboxes = await client.listMailboxes();
-    final folders = <Folder>[];
-    for (final box in mailboxes) {
-      if (box.isNotSelectable) continue;
-      var total = 0;
-      var unread = 0;
+    final selectable =
+        mailboxes.where((box) => !box.isNotSelectable).toList();
+
+    final statuses = await Future.wait(selectable.map((box) async {
       try {
         final status = await client.statusMailbox(
           box,
           [StatusFlags.messages, StatusFlags.unseen],
         );
-        total = status.messagesExists;
-        unread = status.messagesUnseen;
+        return (status.messagesExists, status.messagesUnseen);
       } catch (_) {
-        // STATUS is optional per folder; counts stay at 0 if it fails.
+        return (0, 0); // STATUS is optional per folder.
       }
-      folders.add(Folder(
-        name: box.name,
-        path: box.path,
-        total: total,
-        unread: unread,
-      ));
-    }
-    return folders;
+    }));
+
+    return [
+      for (var i = 0; i < selectable.length; i++)
+        Folder(
+          name: selectable[i].name,
+          path: selectable[i].path,
+          total: statuses[i].$1,
+          unread: statuses[i].$2,
+        ),
+    ];
   }
 
   /// Fetches the [count] most recent messages of [folderPath] as metadata
@@ -74,7 +151,7 @@ class ImapService {
     int count = 50,
   }) async {
     final client = _requireClient;
-    final box = await client.selectMailboxByPath(folderPath);
+    final box = await _select(folderPath, forceRefresh: true);
     if (box.messagesExists == 0) return [];
 
     final result = await client.fetchRecentMessages(
@@ -104,7 +181,7 @@ class ImapService {
   /// Fetches the full body of a single message by UID for the reader panel.
   Future<MimeMessage> fetchFullMessage(String folderPath, int uid) async {
     final client = _requireClient;
-    await client.selectMailboxByPath(folderPath);
+    await _select(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
     final result = await client.uidFetchMessages(sequence, 'BODY.PEEK[]');
     if (result.messages.isEmpty) {
@@ -115,7 +192,7 @@ class ImapService {
 
   Future<void> markSeen(String folderPath, int uid, {bool isSeen = true}) async {
     final client = _requireClient;
-    await client.selectMailboxByPath(folderPath);
+    await _select(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
     if (isSeen) {
       await client.uidMarkSeen(sequence);
@@ -124,9 +201,26 @@ class ImapService {
     }
   }
 
+  /// Moves a message to [trashPath] (MOVE, with COPY+DELETE fallback for
+  /// servers without the MOVE extension).
+  Future<void> moveToTrash(
+      String folderPath, int uid, String trashPath) async {
+    final client = _requireClient;
+    await _select(folderPath);
+    final sequence = MessageSequence.fromId(uid, isUid: true);
+    try {
+      await client.uidMove(sequence, targetMailboxPath: trashPath);
+    } on ImapException {
+      await client.uidCopy(sequence, targetMailboxPath: trashPath);
+      await client.uidMarkDeleted(sequence);
+      await client.expunge();
+    }
+  }
+
+  /// Permanently deletes a message (used inside the trash folder).
   Future<void> deleteMessage(String folderPath, int uid) async {
     final client = _requireClient;
-    await client.selectMailboxByPath(folderPath);
+    await _select(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
     await client.uidMarkDeleted(sequence);
     await client.expunge();
