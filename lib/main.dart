@@ -30,9 +30,19 @@ class OpenMailboxApp extends ConsumerWidget {
       title: 'OpenMailbox',
       themeMode: prefs.materialThemeMode,
       theme: buildTheme(Brightness.light,
-          accent: prefs.accent, compact: prefs.compact),
+          accent: prefs.accent,
+          compact: prefs.compact,
+          fontFamily: prefs.fontFamily),
       darkTheme: buildTheme(Brightness.dark,
-          accent: prefs.accent, compact: prefs.compact),
+          accent: prefs.accent,
+          compact: prefs.compact,
+          fontFamily: prefs.fontFamily),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(prefs.fontScale),
+        ),
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: const _RootScreen(),
     );
   }

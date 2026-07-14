@@ -86,6 +86,7 @@ ThemeData buildTheme(
   Brightness brightness, {
   Color accent = AppColors.primary,
   bool compact = false,
+  String? fontFamily,
 }) {
   final scheme = ColorScheme.fromSeed(
     seedColor: accent,
@@ -93,6 +94,7 @@ ThemeData buildTheme(
   );
   return ThemeData(
     useMaterial3: true,
+    fontFamily: fontFamily,
     colorScheme: scheme,
     extensions: [AppStyle(accent: accent, compact: compact)],
     visualDensity: compact

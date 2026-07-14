@@ -19,6 +19,23 @@ abstract class AppPrefs with _$AppPrefs {
 
     /// Compact density: tighter list rows, no preview line.
     @Default(false) bool compact,
+
+    /// Font family name, null = system default.
+    String? fontFamily,
+
+    /// Global text scale (0.85 – 1.3).
+    @Default(1.0) double fontScale,
+
+    /// Pane widths of the desktop layout (logical pixels).
+    @Default(240.0) double sidebarWidth,
+    @Default(380.0) double listWidth,
+
+    /// Hide the reader pane: the list takes the full width and opening
+    /// an email pushes a full-screen reader.
+    @Default(false) bool hideReader,
+
+    /// Privacy: remote images in HTML emails load only on demand.
+    @Default(true) bool blockRemoteImages,
     @Default(0) int updatedAt,
   }) = _AppPrefs;
 
@@ -42,4 +59,13 @@ const accentChoices = <(String, int)>[
   ('Corail', 0xFFE85D75),
   ('Ambre', 0xFFD9822B),
   ('Graphite', 0xFF5F6472),
+];
+
+/// Font choices: label → family name (null = platform default).
+/// Families resolve to their platform equivalents (serif/monospace are
+/// generic and always available).
+const fontChoices = <(String, String?)>[
+  ('Système', null),
+  ('Serif', 'serif'),
+  ('Monospace', 'monospace'),
 ];

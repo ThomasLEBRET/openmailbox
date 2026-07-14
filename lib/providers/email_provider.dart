@@ -63,6 +63,26 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     }
   }
 
+  /// Server-side search in the current folder — results replace the list
+  /// until the next sync() (triggered by clearing the search).
+  Future<void> searchServer(String query) async {
+    ref.read(emailSyncingProvider.notifier).set(true);
+    try {
+      final folder = ref.read(currentFolderProvider);
+      final result = await AsyncValue.guard(() async {
+        final emails = await withImapSession(
+            ref, (imap) => imap.searchMessages(folder, query));
+        emails.sort((a, b) => b.date.compareTo(a.date));
+        return emails;
+      });
+      if (ref.read(currentFolderProvider) == folder) {
+        state = result;
+      }
+    } finally {
+      ref.read(emailSyncingProvider.notifier).set(false);
+    }
+  }
+
   /// Some senders declare HTML content as text/plain; without this the
   /// reader shows raw HTML source as text.
   static bool _looksLikeHtml(String body) {

@@ -257,28 +257,32 @@ class ImapService {
         criteria: '(UID FLAGS ENVELOPE)',
       ),
     );
-    return result.messages.map((message) {
-      final envelope = message.envelope;
-      final fromAddresses = envelope?.from ?? message.from;
-      final sender = (fromAddresses != null && fromAddresses.isNotEmpty)
-          ? fromAddresses.first
-          : null;
-      final from = sender == null
-          ? ''
-          : (sender.personalName?.isNotEmpty ?? false)
-              ? sender.personalName!
-              : sender.email;
-      return Email(
-        uid: message.uid ?? message.sequenceId ?? 0,
-        folder: folderPath,
-        from: from,
-        fromEmail: sender?.email ?? '',
-        subject: envelope?.subject ?? message.decodeSubject() ?? '(sans sujet)',
-        date: envelope?.date ?? message.decodeDate() ?? DateTime.now(),
-        preview: '',
-        isRead: message.isSeen,
-      );
-    }).toList();
+    return result.messages
+        .map((message) => _toEmail(message, folderPath))
+        .toList();
+  }
+
+  Email _toEmail(MimeMessage message, String folderPath) {
+    final envelope = message.envelope;
+    final fromAddresses = envelope?.from ?? message.from;
+    final sender = (fromAddresses != null && fromAddresses.isNotEmpty)
+        ? fromAddresses.first
+        : null;
+    final from = sender == null
+        ? ''
+        : (sender.personalName?.isNotEmpty ?? false)
+            ? sender.personalName!
+            : sender.email;
+    return Email(
+      uid: message.uid ?? message.sequenceId ?? 0,
+      folder: folderPath,
+      from: from,
+      fromEmail: sender?.email ?? '',
+      subject: envelope?.subject ?? message.decodeSubject() ?? '(sans sujet)',
+      date: envelope?.date ?? message.decodeDate() ?? DateTime.now(),
+      preview: '',
+      isRead: message.isSeen,
+    );
   }
 
   /// Fetches the readable text of a single message for the reader panel.
@@ -355,6 +359,35 @@ class ImapService {
       await client.uidMarkDeleted(sequence);
       await client.expunge();
     }
+  }
+
+  /// Server-side search (IMAP SEARCH TEXT) in [folderPath]; returns the
+  /// most recent [limit] matches as envelope metadata.
+  Future<List<Email>> searchMessages(
+    String folderPath,
+    String query, {
+    int limit = 50,
+  }) async {
+    final client = _requireClient;
+    await _select(folderPath, forceRefresh: true);
+    final escaped = query.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+    final result = await _timed(
+      'search',
+      () => client.uidSearchMessages(searchCriteria: 'TEXT "$escaped"'),
+    );
+    final ids = result.matchingSequence?.toList() ?? const [];
+    if (ids.isEmpty) return const [];
+    final recent = ids.length > limit ? ids.sublist(ids.length - limit) : ids;
+    final fetch = await _timed(
+      'fetch search envelopes',
+      () => client.uidFetchMessages(
+        MessageSequence.fromIds(recent, isUid: true),
+        '(UID FLAGS ENVELOPE)',
+      ),
+    );
+    return fetch.messages
+        .map((message) => _toEmail(message, folderPath))
+        .toList();
   }
 
   static const _prefsFolder = 'OpenMailbox_Prefs';

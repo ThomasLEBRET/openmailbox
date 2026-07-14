@@ -36,16 +36,33 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
     }
   }
 
+  static const _unsetFont = 'UNSET';
+
   Future<void> apply({
     String? themeMode,
     int? accentValue,
     bool? compact,
+    String? fontFamily = _unsetFont,
+    double? fontScale,
+    double? sidebarWidth,
+    double? listWidth,
+    bool? hideReader,
+    bool? blockRemoteImages,
   }) async {
     final current = state.value ?? const AppPrefs();
     final next = current.copyWith(
       themeMode: themeMode ?? current.themeMode,
       accentValue: accentValue ?? current.accentValue,
       compact: compact ?? current.compact,
+      // fontFamily distinguishes "not passed" (sentinel) from an explicit
+      // null, which means "back to the system font".
+      fontFamily:
+          identical(fontFamily, _unsetFont) ? current.fontFamily : fontFamily,
+      fontScale: fontScale ?? current.fontScale,
+      sidebarWidth: sidebarWidth ?? current.sidebarWidth,
+      listWidth: listWidth ?? current.listWidth,
+      hideReader: hideReader ?? current.hideReader,
+      blockRemoteImages: blockRemoteImages ?? current.blockRemoteImages,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     state = AsyncData(next);

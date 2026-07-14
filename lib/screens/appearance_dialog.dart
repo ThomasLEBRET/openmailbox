@@ -18,8 +18,8 @@ class AppearanceDialog extends ConsumerWidget {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Padding(
+        constraints: const BoxConstraints(maxWidth: 440, maxHeight: 640),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -107,7 +107,37 @@ class AppearanceDialog extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 20),
-              _label(context, 'Densité'),
+              _label(context, 'Typographie'),
+              const SizedBox(height: 8),
+              SegmentedButton<String?>(
+                segments: [
+                  for (final (name, family) in fontChoices)
+                    ButtonSegment(value: family, label: Text(name)),
+                ],
+                selected: {prefs.fontFamily},
+                onSelectionChanged: (selection) =>
+                    notifier.apply(fontFamily: selection.first),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.text_fields, size: 15),
+                  Expanded(
+                    child: Slider(
+                      value: prefs.fontScale.clamp(0.85, 1.3),
+                      min: 0.85,
+                      max: 1.3,
+                      divisions: 9,
+                      label: '${(prefs.fontScale * 100).round()} %',
+                      onChanged: (value) =>
+                          notifier.apply(fontScale: value),
+                    ),
+                  ),
+                  const Icon(Icons.text_fields, size: 22),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _label(context, 'Affichage'),
               const SizedBox(height: 4),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -119,6 +149,29 @@ class AppearanceDialog extends ConsumerWidget {
                 ),
                 value: prefs.compact,
                 onChanged: (value) => notifier.apply(compact: value),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Masquer le volet de lecture',
+                    style: TextStyle(fontSize: 14)),
+                subtitle: const Text(
+                  'Liste pleine largeur, les mails s\'ouvrent en plein écran',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: prefs.hideReader,
+                onChanged: (value) => notifier.apply(hideReader: value),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Bloquer les images distantes',
+                    style: TextStyle(fontSize: 14)),
+                subtitle: const Text(
+                  'Confidentialité : chargement à la demande dans chaque mail',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: prefs.blockRemoteImages,
+                onChanged: (value) =>
+                    notifier.apply(blockRemoteImages: value),
               ),
             ],
           ),

@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/email.dart';
+import '../models/prefs.dart';
 import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
+import '../providers/prefs_provider.dart';
 import '../widgets/email_list_tile.dart';
 import '../widgets/email_reader.dart';
 import '../widgets/folder_sidebar.dart';
@@ -26,6 +28,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   String? _selectedBody;
   bool _selectedBodyIsHtml = false;
 
+  // Pane resizing: live value while dragging, persisted on release.
+  double? _dragSidebarWidth;
+  double? _dragListWidth;
+
+  // Search: instant local filter; Enter runs a server-side search.
+  final _searchController = TextEditingController();
+  bool _searchOpen = false;
+  String _localQuery = '';
+  bool _serverResults = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  bool get _hideReader =>
+      (ref.read(prefsProvider).value ?? const AppPrefs()).hideReader &&
+      MediaQuery.of(context).size.width > 800;
+
   @override
   void initState() {
     super.initState();
@@ -42,6 +64,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _openEmail(Email email) async {
+    if (_hideReader) {
+      // Reader pane hidden: the email opens as a full-screen page.
+      setState(() => _selected = email);
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => _ReaderScreen(email: email)),
+      );
+      return;
+    }
     setState(() {
       _selected = email;
       _selectedBody = null;
@@ -112,7 +142,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         body: body,
       );
 
-  /// J/K navigation: opens the next/previous email in the list.
+  /// J/K navigation: opens the next/previous email — or only moves the
+  /// highlight when the reader pane is hidden (Enter then opens).
   void _openSibling(int delta) {
     final emails = ref.read(emailListProvider).value;
     if (emails == null || emails.isEmpty) return;
@@ -121,39 +152,96 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ? -1
         : emails.indexWhere((email) => email.uid == selected.uid);
     index = (index + delta).clamp(0, emails.length - 1);
-    if (selected?.uid != emails[index].uid) {
+    if (selected?.uid == emails[index].uid) return;
+    if (_hideReader) {
+      setState(() => _selected = emails[index]);
+    } else {
       _openEmail(emails[index]);
     }
   }
+
+  /// Letter shortcuts must not fire while the user types in a text field
+  /// (the search bar lives in the same focus scope).
+  static bool get _isTyping {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    return context.widget is EditableText ||
+        context.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  VoidCallback _guarded(VoidCallback action) => () {
+        if (!_isTyping) action();
+      };
 
   /// Reader shortcuts (toolbar hints: R, F, U, ⌫; J/K to navigate).
   Map<ShortcutActivator, VoidCallback> get _shortcuts {
     final selected = _selected;
     return {
-      const SingleActivator(LogicalKeyboardKey.keyJ): () => _openSibling(1),
-      const SingleActivator(LogicalKeyboardKey.keyK): () => _openSibling(-1),
+      const SingleActivator(LogicalKeyboardKey.keyJ):
+          _guarded(() => _openSibling(1)),
+      const SingleActivator(LogicalKeyboardKey.keyK):
+          _guarded(() => _openSibling(-1)),
       if (selected != null) ...{
-        const SingleActivator(LogicalKeyboardKey.keyR): () =>
-            _replyTo(selected),
-        const SingleActivator(LogicalKeyboardKey.keyF): () => _forward(
-              selected,
-              body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''),
-            ),
-        const SingleActivator(LogicalKeyboardKey.keyU): () async {
+        const SingleActivator(LogicalKeyboardKey.keyR):
+            _guarded(() => _replyTo(selected)),
+        const SingleActivator(LogicalKeyboardKey.keyF): _guarded(() =>
+            _forward(selected,
+                body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''))),
+        const SingleActivator(LogicalKeyboardKey.keyU): _guarded(() async {
           await ref
               .read(emailListProvider.notifier)
               .markRead(selected.uid, !selected.isRead);
           setState(() =>
               _selected = selected.copyWith(isRead: !selected.isRead));
-        },
-        const SingleActivator(LogicalKeyboardKey.backspace): () =>
-            _deleteEmail(selected),
-        const SingleActivator(LogicalKeyboardKey.delete): () =>
-            _deleteEmail(selected),
-        const SingleActivator(LogicalKeyboardKey.escape): () =>
-            setState(() => _selected = null),
+        }),
+        const SingleActivator(LogicalKeyboardKey.backspace):
+            _guarded(() => _deleteEmail(selected)),
+        const SingleActivator(LogicalKeyboardKey.delete):
+            _guarded(() => _deleteEmail(selected)),
+        const SingleActivator(LogicalKeyboardKey.escape):
+            _guarded(() => setState(() => _selected = null)),
+        const SingleActivator(LogicalKeyboardKey.enter): _guarded(() {
+          if (_hideReader) _openEmail(selected);
+        }),
       },
     };
+  }
+
+  // --- Search ---------------------------------------------------------------
+
+  void _onSearchChanged(String value) {
+    setState(() => _localQuery = value.trim());
+  }
+
+  Future<void> _onSearchSubmitted(String value) async {
+    final query = value.trim();
+    if (query.isEmpty) return;
+    setState(() => _serverResults = true);
+    await ref.read(emailListProvider.notifier).searchServer(query);
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    final hadServerResults = _serverResults;
+    setState(() {
+      _searchOpen = false;
+      _localQuery = '';
+      _serverResults = false;
+    });
+    if (hadServerResults) {
+      ref.read(emailListProvider.notifier).sync();
+    }
+  }
+
+  List<Email> _applyLocalFilter(List<Email> emails) {
+    if (_localQuery.isEmpty || _serverResults) return emails;
+    final query = _localQuery.toLowerCase();
+    return emails
+        .where((email) =>
+            email.from.toLowerCase().contains(query) ||
+            email.fromEmail.toLowerCase().contains(query) ||
+            email.subject.toLowerCase().contains(query))
+        .toList();
   }
 
   Future<void> _openCompose(
@@ -206,6 +294,69 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return path.split('/').last;
   }
 
+  /// Folder title + counts + search toggle, and the search bar when open.
+  Widget _buildListHeader() {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        _EmailListHeader(
+          label: _folderLabel(ref.watch(currentFolderProvider)),
+          searchOpen: _searchOpen,
+          onToggleSearch: () {
+            if (_searchOpen) {
+              _clearSearch();
+            } else {
+              setState(() => _searchOpen = true);
+            }
+          },
+        ),
+        if (_searchOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: TextField(
+              controller: _searchController,
+              autofocus: true,
+              onChanged: _onSearchChanged,
+              onSubmitted: _onSearchSubmitted,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Rechercher — Entrée pour chercher sur le serveur',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: _clearSearch,
+                ),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+        if (_serverResults)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 12, 4),
+            child: Row(
+              children: [
+                Icon(Icons.cloud_done_outlined,
+                    size: 15, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Résultats de la recherche serveur',
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _clearSearch,
+                  child: const Text('Effacer', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
@@ -250,6 +401,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
 
     if (isDesktop) {
+      final prefs = ref.watch(prefsProvider).value ?? const AppPrefs();
+      final sidebarWidth =
+          (_dragSidebarWidth ?? prefs.sidebarWidth).clamp(180.0, 340.0);
+      final listWidth =
+          (_dragListWidth ?? prefs.listWidth).clamp(280.0, 640.0);
+
+      final listColumn = Column(
+        children: [
+          _buildListHeader(),
+          const Divider(),
+          Expanded(child: _buildEmailList()),
+        ],
+      );
+
       return Scaffold(
         body: CallbackShortcuts(
           bindings: _shortcuts,
@@ -257,20 +422,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             autofocus: true,
             child: Row(
               children: [
-                SizedBox(width: 240, child: sidebar),
-                Expanded(
-                  flex: 2,
-                  child: Column(
-                    children: [
-                      _EmailListHeader(label: _folderLabel(
-                          ref.watch(currentFolderProvider))),
-                      const Divider(),
-                      Expanded(child: _buildEmailList()),
-                    ],
-                  ),
+                SizedBox(width: sidebarWidth, child: sidebar),
+                _PaneHandle(
+                  onDelta: (dx) => setState(() => _dragSidebarWidth =
+                      ((_dragSidebarWidth ?? prefs.sidebarWidth) + dx)
+                          .clamp(180.0, 340.0)),
+                  onEnd: () {
+                    final width = _dragSidebarWidth;
+                    if (width != null) {
+                      ref
+                          .read(prefsProvider.notifier)
+                          .apply(sidebarWidth: width);
+                    }
+                  },
                 ),
-                const VerticalDivider(width: 1),
-                Expanded(flex: 3, child: _buildDetail()),
+                if (prefs.hideReader)
+                  Expanded(child: listColumn)
+                else ...[
+                  SizedBox(width: listWidth, child: listColumn),
+                  _PaneHandle(
+                    onDelta: (dx) => setState(() => _dragListWidth =
+                        ((_dragListWidth ?? prefs.listWidth) + dx)
+                            .clamp(280.0, 640.0)),
+                    onEnd: () {
+                      final width = _dragListWidth;
+                      if (width != null) {
+                        ref
+                            .read(prefsProvider.notifier)
+                            .apply(listWidth: width);
+                      }
+                    },
+                  ),
+                  Expanded(child: _buildDetail()),
+                ],
               ],
             ),
           ),
@@ -322,11 +506,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         message: '$error',
         onRetry: () => ref.read(emailListProvider.notifier).sync(),
       ),
-      data: (emails) {
+      data: (allEmails) {
+        final emails = _applyLocalFilter(allEmails);
         if (emails.isEmpty) {
           return _EmptyPane(
-            icon: Icons.inbox_rounded,
-            message: 'Aucun email dans ce dossier',
+            icon: _localQuery.isNotEmpty || _serverResults
+                ? Icons.search_off_rounded
+                : Icons.inbox_rounded,
+            message: _localQuery.isNotEmpty || _serverResults
+                ? 'Aucun résultat'
+                : 'Aucun email dans ce dossier',
             onRefresh: () => ref.read(emailListProvider.notifier).sync(),
           );
         }
@@ -385,9 +574,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 }
 
 class _EmailListHeader extends ConsumerWidget {
-  const _EmailListHeader({required this.label});
+  const _EmailListHeader({
+    required this.label,
+    this.searchOpen = false,
+    this.onToggleSearch,
+  });
 
   final String label;
+  final bool searchOpen;
+  final VoidCallback? onToggleSearch;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -428,6 +623,15 @@ class _EmailListHeader extends ConsumerWidget {
               ],
             ),
           ),
+          if (onToggleSearch != null)
+            IconButton(
+              tooltip: searchOpen ? 'Fermer la recherche' : 'Rechercher',
+              icon: Icon(
+                searchOpen ? Icons.search_off_rounded : Icons.search_rounded,
+                size: 20,
+              ),
+              onPressed: onToggleSearch,
+            ),
           if (isSyncing)
             const Padding(
               padding: EdgeInsets.only(right: 12),
@@ -447,6 +651,135 @@ class _EmailListHeader extends ConsumerWidget {
               },
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Draggable vertical divider between two panes.
+class _PaneHandle extends StatelessWidget {
+  const _PaneHandle({required this.onDelta, required this.onEnd});
+
+  final ValueChanged<double> onDelta;
+  final VoidCallback onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) => onDelta(details.delta.dx),
+        onHorizontalDragEnd: (_) => onEnd(),
+        child: SizedBox(
+          width: 7,
+          child: Center(
+            child: Container(
+              width: 1,
+              color: scheme.outlineVariant.withValues(alpha: 0.4),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen reader used when the reader pane is hidden.
+class _ReaderScreen extends ConsumerStatefulWidget {
+  const _ReaderScreen({required this.email});
+
+  final Email email;
+
+  @override
+  ConsumerState<_ReaderScreen> createState() => _ReaderScreenState();
+}
+
+class _ReaderScreenState extends ConsumerState<_ReaderScreen> {
+  late Email _email = widget.email;
+  String? _body;
+  bool _bodyIsHtml = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    try {
+      final (body, isHtml) =
+          await ref.read(emailListProvider.notifier).fetchBody(_email);
+      if (mounted) {
+        setState(() {
+          _body = body;
+          _bodyIsHtml = isHtml;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _body = 'Erreur de chargement : $e');
+    }
+    if (!_email.isRead) {
+      await ref.read(emailListProvider.notifier).markRead(_email.uid, true);
+    }
+  }
+
+  Future<void> _compose({String to = '', String subject = '', String body = ''}) {
+    return showDialog<bool>(
+      context: context,
+      builder: (_) => ComposeScreen(
+        initialTo: to,
+        initialSubject: subject,
+        initialBody: body,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(_email.subject,
+            style: const TextStyle(fontSize: 15),
+            overflow: TextOverflow.ellipsis),
+      ),
+      body: EmailReader(
+        email: _email,
+        body: _body,
+        bodyIsHtml: _bodyIsHtml,
+        onReply: () => _compose(
+          to: _email.fromEmail.isNotEmpty ? _email.fromEmail : _email.from,
+          subject: 'Re: ${_email.subject}',
+        ),
+        onForward: () => _compose(
+          subject: 'Fwd: ${_email.subject}',
+          body: _bodyIsHtml ? '' : (_body ?? ''),
+        ),
+        onDelete: () async {
+          final navigator = Navigator.of(context);
+          final messenger = ScaffoldMessenger.of(context);
+          try {
+            await ref
+                .read(emailListProvider.notifier)
+                .deleteEmail(_email.uid);
+            navigator.pop();
+          } catch (e) {
+            messenger.showSnackBar(
+              SnackBar(content: Text('Échec de la suppression : $e')),
+            );
+          }
+        },
+        onToggleRead: () async {
+          await ref
+              .read(emailListProvider.notifier)
+              .markRead(_email.uid, !_email.isRead);
+          setState(() => _email = _email.copyWith(isRead: !_email.isRead));
+        },
       ),
     );
   }
