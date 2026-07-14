@@ -183,8 +183,10 @@ class _HtmlBodyViewState extends State<_HtmlBodyView> {
   @override
   void initState() {
     super.initState();
+    // Note: setBackgroundColor is NOT called — it throws
+    // UnimplementedError on macOS and kills the whole widget subtree.
+    // The ColoredBox in build() provides the white backdrop instead.
     _controller = WebViewController()
-      ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
