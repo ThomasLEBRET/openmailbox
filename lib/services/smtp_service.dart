@@ -50,6 +50,12 @@ class SmtpService {
       throw StateError('SmtpService.connect() must be called first');
     }
 
+    // Defense in depth against header injection: a subject reused from an
+    // untrusted incoming email (Re:/Fwd:) could carry CR/LF and smuggle
+    // extra headers (e.g. a hidden Bcc). Strip line breaks before it
+    // becomes a header.
+    subject = subject.replaceAll(RegExp(r'[\r\n]+'), ' ').trim();
+
     final MimeMessage message;
     if (attachments.isEmpty) {
       // Single-part text/plain. prepareMultipartAlternativeMessage without

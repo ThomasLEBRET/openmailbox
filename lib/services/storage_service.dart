@@ -242,11 +242,13 @@ class StorageService {
       batch.delete('emails',
           where: 'account = ? AND folder = ?', whereArgs: [accountId, folder]);
     } else {
-      final uids = emails.map((e) => e.uid).join(',');
+      // Parameterized placeholders rather than string-interpolated uids —
+      // safe today (uid is an int) and robust if the type ever changes.
+      final placeholders = List.filled(emails.length, '?').join(',');
       batch.rawDelete(
         'DELETE FROM emails WHERE account = ? AND folder = ? '
-        'AND uid NOT IN ($uids)',
-        [accountId, folder],
+        'AND uid NOT IN ($placeholders)',
+        [accountId, folder, ...emails.map((e) => e.uid)],
       );
     }
     for (final email in emails) {

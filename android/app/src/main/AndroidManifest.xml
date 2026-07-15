@@ -1,8 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- allowBackup=false keeps the local email cache (SQLite) and config
+         out of adb/cloud backups; credentials already live in the
+         Keystore, which is never backed up. -->
     <application
         android:label="openmailbox"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

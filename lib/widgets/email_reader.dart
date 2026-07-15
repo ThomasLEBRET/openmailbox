@@ -279,43 +279,52 @@ class _HtmlBodyViewState extends ConsumerState<_HtmlBodyView> {
   late bool _showImages;
   late bool _hasRemoteImages;
 
-  static final _remoteSrc = RegExp(
-    '''src\\s*=\\s*("https?://[^"]*"|'https?://[^']*')''',
+  // Any remote reference an email could use to phone home: img/src,
+  // srcset, CSS url(), <link>, backgrounds… Used only to decide whether
+  // to show the "load images" banner; the actual blocking is done by the
+  // injected Content-Security-Policy, which the render engine enforces
+  // and no regex can be tricked around.
+  static final _remoteRef = RegExp(
+    r'''(src|srcset|href|background)\s*=\s*['"]?https?://|url\(\s*['"]?https?://''',
     caseSensitive: false,
   );
-
-  static String _stripRemoteImages(String html) =>
-      html.replaceAllMapped(_remoteSrc, (m) => 'data-blocked-src=${m[1]}');
-
-  String get _effectiveHtml =>
-      _showImages ? widget.html : _stripRemoteImages(widget.html);
 
   @override
   void initState() {
     super.initState();
     _showImages = !(ref.read(prefsProvider).value?.blockRemoteImages ?? true);
-    _hasRemoteImages = _remoteSrc.hasMatch(widget.html);
+    _hasRemoteImages = _remoteRef.hasMatch(widget.html);
     // Note: setBackgroundColor is NOT called — it throws
     // UnimplementedError on macOS and kills the whole widget subtree.
     // The ColoredBox in build() provides the white backdrop instead.
     _controller = WebViewController()
+      // Emails are untrusted content: JavaScript MUST stay disabled so a
+      // malicious HTML mail can't run scripts (exfiltration, tracking,
+      // WebKit exploits). WKWebView enables JS natively by default, so
+      // this call is required, not decorative.
+      ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
             final url = request.url;
-            // Initial loadHtmlString navigations use about:/data: — let
-            // them through; everything else opens externally.
+            // User-initiated clicks (web links, mailto) open externally.
             if (url.startsWith('http://') ||
                 url.startsWith('https://') ||
                 url.startsWith('mailto:')) {
               EmailReader._openLink(url);
               return NavigationDecision.prevent;
             }
-            return NavigationDecision.navigate;
+            // Only the initial in-memory document load may proceed inside
+            // the WebView. Everything else — file://, custom schemes an
+            // email might smuggle in — is blocked (local file access).
+            if (url.startsWith('about:') || url.startsWith('data:')) {
+              return NavigationDecision.navigate;
+            }
+            return NavigationDecision.prevent;
           },
         ),
       )
-      ..loadHtmlString(_document(_effectiveHtml));
+      ..loadHtmlString(_document(widget.html, blockRemote: !_showImages));
   }
 
   @override
@@ -324,24 +333,52 @@ class _HtmlBodyViewState extends ConsumerState<_HtmlBodyView> {
     if (oldWidget.html != widget.html) {
       _showImages =
           !(ref.read(prefsProvider).value?.blockRemoteImages ?? true);
-      _hasRemoteImages = _remoteSrc.hasMatch(widget.html);
-      _controller.loadHtmlString(_document(_effectiveHtml));
+      _hasRemoteImages = _remoteRef.hasMatch(widget.html);
+      _controller.loadHtmlString(
+          _document(widget.html, blockRemote: !_showImages));
     }
   }
 
   void _revealImages() {
     setState(() => _showImages = true);
-    _controller.loadHtmlString(_document(widget.html));
+    _controller.loadHtmlString(_document(widget.html, blockRemote: false));
   }
 
-  /// Emails that are already full documents load as-is; fragments get a
-  /// minimal readable shell (charset, viewport, sane typography).
-  static String _document(String html) {
-    if (html.toLowerCase().contains('<html')) return html;
+  /// A CSP that lets the mail render but blocks it from reaching the
+  /// network: no scripts at all, images and fonts only from inline data:
+  /// (and cid: parts), styles inline only. When the user reveals images,
+  /// remote img/style/font sources are allowed but scripts stay banned.
+  static String _csp({required bool blockRemote}) {
+    final content = blockRemote
+        ? "default-src 'none'; img-src data: cid:; "
+            "style-src 'unsafe-inline'; font-src data:;"
+        : "default-src 'none'; img-src data: cid: https: http:; "
+            "style-src 'unsafe-inline' https: http:; "
+            "font-src data: https: http:;";
+    return '<meta http-equiv="Content-Security-Policy" content="$content">';
+  }
+
+  /// Wraps fragments in a readable shell and always injects the CSP
+  /// (into the existing head for full documents).
+  static String _document(String html, {required bool blockRemote}) {
+    final csp = _csp(blockRemote: blockRemote);
+    if (html.toLowerCase().contains('<head')) {
+      return html.replaceFirstMapped(
+        RegExp('<head[^>]*>', caseSensitive: false),
+        (m) => '${m[0]}$csp',
+      );
+    }
+    if (html.toLowerCase().contains('<html')) {
+      return html.replaceFirstMapped(
+        RegExp('<html[^>]*>', caseSensitive: false),
+        (m) => '${m[0]}<head>$csp</head>',
+      );
+    }
     return '''
 <!DOCTYPE html>
 <html>
 <head>
+$csp
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
