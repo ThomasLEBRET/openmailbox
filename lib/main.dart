@@ -7,7 +7,6 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'models/prefs.dart';
 import 'providers/config_provider.dart';
 import 'providers/prefs_provider.dart';
-import 'services/background_worker.dart';
 import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/setup_screen.dart';
@@ -19,25 +18,9 @@ void main() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
-  // Start the UI immediately. Notification/background setup must NEVER
-  // block or crash startup — a plugin failing to initialize used to keep
-  // the whole app from opening on Android.
+  // Start the UI immediately; notification setup runs after, guarded.
   runApp(const ProviderScope(child: OpenMailboxApp()));
-  _initBackgroundServices();
-}
-
-Future<void> _initBackgroundServices() async {
-  try {
-    await NotificationService.init();
-  } catch (_) {
-    // Notifications optional.
-  }
-  try {
-    // Periodic background new-mail check (Android; no-op elsewhere).
-    await initBackgroundMailCheck();
-  } catch (_) {
-    // Background scheduling optional.
-  }
+  NotificationService.init().catchError((_) {});
 }
 
 class OpenMailboxApp extends ConsumerWidget {

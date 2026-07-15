@@ -9,7 +9,6 @@ import '../models/prefs.dart';
 import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
-import '../providers/badge_provider.dart';
 import '../providers/inbox_watcher.dart';
 import '../providers/prefs_provider.dart';
 import '../providers/undo_provider.dart';
@@ -157,10 +156,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     super.initState();
     Future.microtask(() {
       _refreshAll();
-      // Start the new-mail watcher and keep the icon badge in sync with
-      // the total unread across all folders.
+      // Start the new-mail watcher (in-app notifications + badge).
       ref.read(inboxWatcherProvider);
-      ref.read(badgeUpdaterProvider);
     });
   }
 
