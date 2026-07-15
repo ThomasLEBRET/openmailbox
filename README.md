@@ -64,3 +64,7 @@ lib/
 ├── screens/      # home, setup (+ settings), compose, apparence
 └── widgets/      # sidebar, tuile email, lecteur
 ```
+
+## Licence
+
+[GPL-3.0](LICENSE) — vous pouvez utiliser, modifier et redistribuer ce code, à condition que tout dérivé reste sous la même licence libre. Les contributions sont les bienvenues.

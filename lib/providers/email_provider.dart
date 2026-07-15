@@ -209,6 +209,48 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
         .catchError((_) {}));
   }
 
+  /// Adds/removes a label keyword, locally then on the server.
+  Future<void> toggleLabel(int uid, String slug,
+      {bool recordUndo = true}) async {
+    final folder = ref.read(currentFolderProvider);
+    final email = state.value?.where((e) => e.uid == uid).firstOrNull;
+    if (email == null) return;
+    final has = email.labels.contains(slug);
+    await _applyLabel(folder, uid, slug, add: !has);
+    if (recordUndo) {
+      ref.read(undoProvider.notifier).push(
+          has ? 'Label retiré' : 'Label',
+          () => _applyLabel(folder, uid, slug, add: has));
+    }
+  }
+
+  Future<void> _applyLabel(String folder, int uid, String slug,
+      {required bool add}) async {
+    final accountId = _accountId;
+    final email = state.value?.where((e) => e.uid == uid).firstOrNull;
+    final labels = {...?email?.labels};
+    if (add) {
+      labels.add(slug);
+    } else {
+      labels.remove(slug);
+    }
+    final list = labels.toList();
+    await ref
+        .read(storageServiceProvider)
+        .setLabels(accountId, folder, uid, list);
+    if (ref.read(currentFolderProvider) == folder) {
+      state = state.whenData(
+        (emails) => [
+          for (final e in emails)
+            if (e.uid == uid) e.copyWith(labels: list) else e,
+        ],
+      );
+    }
+    unawaited(withImapSession(
+            ref, (imap) => imap.setKeyword(folder, uid, slug, add: add))
+        .catchError((_) {}));
+  }
+
   /// Moves an email of the current folder to [targetPath] (drag & drop,
   /// deletion-to-trash). Optimistic with rollback; records a Cmd+Z entry
   /// when the server reports the new UID (COPYUID).

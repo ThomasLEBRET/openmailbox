@@ -70,6 +70,33 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
     state = result;
   }
 
+  Future<void> createFolder(String name) async {
+    await withImapSession(ref, (imap) => imap.createFolder(name));
+    await refresh();
+  }
+
+  Future<void> renameFolder(String path, String newName) async {
+    await withImapSession(ref, (imap) => imap.renameFolder(path, newName));
+    if (ref.read(currentFolderProvider) == path) {
+      ref.read(currentFolderProvider.notifier).select('INBOX');
+    }
+    await refresh();
+  }
+
+  Future<void> deleteFolder(String path) async {
+    await withImapSession(ref, (imap) => imap.deleteFolder(path));
+    final account = ref.read(currentAccountProvider);
+    if (account != null) {
+      // Purge the cached emails of the removed folder.
+      await ref.read(storageServiceProvider).deleteAccountFolder(
+          account.id, path);
+    }
+    if (ref.read(currentFolderProvider) == path) {
+      ref.read(currentFolderProvider.notifier).select('INBOX');
+    }
+    await refresh();
+  }
+
   /// Optimistically shifts the counts of [path] (e.g. unread -1 when an
   /// email is read locally) so badges stay coherent between two syncs.
   Future<void> adjustCounts(String path,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/email.dart';
+import '../providers/prefs_provider.dart';
 import '../theme.dart';
 
 class EmailListTile extends StatefulWidget {
@@ -14,6 +16,7 @@ class EmailListTile extends StatefulWidget {
     required this.onToggleRead,
     required this.onDelete,
     required this.onToggleFlag,
+    this.onLabel,
     this.selectionMode = false,
     this.checked = false,
     this.onCheckChanged,
@@ -27,6 +30,7 @@ class EmailListTile extends StatefulWidget {
   final VoidCallback onToggleRead;
   final VoidCallback onDelete;
   final VoidCallback onToggleFlag;
+  final VoidCallback? onLabel;
 
   /// True when at least one email is checked: checkboxes stay visible
   /// and tapping toggles instead of opening.
@@ -191,6 +195,7 @@ class _EmailListTileState extends State<EmailListTile> {
                                 onToggleRead: widget.onToggleRead,
                                 onDelete: widget.onDelete,
                                 onToggleFlag: widget.onToggleFlag,
+                                onLabel: widget.onLabel,
                               )
                             else
                               Text(
@@ -251,6 +256,11 @@ class _EmailListTileState extends State<EmailListTile> {
                             ),
                           ),
                         ],
+                        if (email.labels.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: _LabelChips(slugs: email.labels),
+                          ),
                       ],
                     ),
                   ),
@@ -301,6 +311,7 @@ class _QuickActions extends StatelessWidget {
     required this.onToggleRead,
     required this.onDelete,
     required this.onToggleFlag,
+    this.onLabel,
   });
 
   final bool isRead;
@@ -310,6 +321,7 @@ class _QuickActions extends StatelessWidget {
   final VoidCallback onToggleRead;
   final VoidCallback onDelete;
   final VoidCallback onToggleFlag;
+  final VoidCallback? onLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -355,6 +367,8 @@ class _QuickActions extends StatelessWidget {
           isRead ? 'Marquer non lu' : 'Marquer lu',
           onToggleRead,
         ),
+        if (onLabel != null)
+          action(Icons.label_outline_rounded, 'Étiqueter', onLabel!),
         action(Icons.reply_rounded, 'Répondre', onReply),
         action(Icons.forward_rounded, 'Transférer', onForward),
         action(
@@ -363,6 +377,49 @@ class _QuickActions extends StatelessWidget {
           onDelete,
           color: scheme.error,
         ),
+      ],
+    );
+  }
+}
+
+
+/// Small colored chips resolving label slugs against the synced defs.
+class _LabelChips extends ConsumerWidget {
+  const _LabelChips({required this.slugs});
+
+  final List<String> slugs;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final defs = ref.watch(prefsProvider).value?.labels ?? const [];
+    final matched = [
+      for (final slug in slugs)
+        defs.where((d) => d.slug == slug).firstOrNull,
+    ].nonNulls.take(3).toList();
+    if (matched.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 6,
+      children: [
+        for (final label in matched)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+            decoration: BoxDecoration(
+              color: Color(label.colorValue).withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: Color(label.colorValue).withValues(alpha: 0.6),
+              ),
+            ),
+            child: Text(
+              label.name,
+              style: TextStyle(
+                fontSize: 10.5,
+                color: Color(label.colorValue),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
       ],
     );
   }

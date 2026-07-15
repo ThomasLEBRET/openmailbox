@@ -18,6 +18,7 @@ import '../widgets/email_reader.dart';
 import '../widgets/folder_sidebar.dart';
 import 'appearance_dialog.dart';
 import 'compose_screen.dart';
+import 'label_picker_dialog.dart';
 import 'setup_screen.dart';
 
 /// Runs [doSend] after the configurable undo window ([delaySeconds],
@@ -280,6 +281,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (!_isTyping) action();
       };
 
+  void _openLabels(Email email) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => LabelPickerDialog(email: email),
+    );
+  }
+
   Future<void> _undoLast() async {
     final label = await ref.read(undoProvider.notifier).undoLast();
     _notify(label == null ? 'Rien à annuler' : 'Annulé : $label');
@@ -318,6 +326,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             _guarded(() => _deleteEmail(selected)),
         const SingleActivator(LogicalKeyboardKey.escape):
             _guarded(() => setState(() => _selected = null)),
+        const SingleActivator(LogicalKeyboardKey.keyL):
+            _guarded(() => _openLabels(selected)),
         const SingleActivator(LogicalKeyboardKey.enter): _guarded(() {
           if (_hideReader) _openEmail(selected);
         }),
@@ -759,6 +769,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 onDelete: () => _deleteEmail(email),
                 onToggleFlag: () =>
                     ref.read(emailListProvider.notifier).toggleFlagged(email.uid),
+                onLabel: () => _openLabels(email),
               );
             },
           ),
@@ -786,6 +797,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         body: _selectedBodyIsHtml ? '' : (_selectedBody ?? ''),
       ),
       onDelete: () => _deleteEmail(selected),
+      onLabel: () => _openLabels(selected),
       onToggleRead: () async {
         await ref
             .read(emailListProvider.notifier)
@@ -1006,6 +1018,10 @@ class _ReaderScreenState extends ConsumerState<_ReaderScreen> {
             );
           }
         },
+        onLabel: () => showDialog<void>(
+          context: context,
+          builder: (_) => LabelPickerDialog(email: _email),
+        ),
         onToggleRead: () async {
           await ref
               .read(emailListProvider.notifier)

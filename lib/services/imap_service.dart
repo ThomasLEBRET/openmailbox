@@ -273,17 +273,66 @@ class ImapService {
         : (sender.personalName?.isNotEmpty ?? false)
             ? sender.personalName!
             : sender.email;
+    final toAddresses = envelope?.to ?? message.to;
+    // Custom keywords = our labels (system flags start with a backslash).
+    final labels = (message.flags ?? const [])
+        .where((flag) => flag.startsWith('om_'))
+        .toList();
     return Email(
       uid: message.uid ?? message.sequenceId ?? 0,
       folder: folderPath,
       from: from,
       fromEmail: sender?.email ?? '',
+      to: toAddresses?.map((a) => a.email).join(', ') ?? '',
       subject: envelope?.subject ?? message.decodeSubject() ?? '(sans sujet)',
       date: envelope?.date ?? message.decodeDate() ?? DateTime.now(),
       preview: '',
       isRead: message.isSeen,
       isFlagged: message.isFlagged,
+      labels: labels,
     );
+  }
+
+  /// Adds or removes a custom keyword (label) on a message.
+  Future<void> setKeyword(String folderPath, int uid, String keyword,
+      {required bool add}) async {
+    final client = _requireClient;
+    await _select(folderPath);
+    final sequence = MessageSequence.fromId(uid, isUid: true);
+    await client.uidStore(
+      sequence,
+      [keyword],
+      action: add ? StoreAction.add : StoreAction.remove,
+      silent: true,
+    );
+  }
+
+  // --- Folder management -----------------------------------------------------
+
+  Future<void> createFolder(String path) async {
+    final client = _requireClient;
+    await client.createMailbox(path);
+  }
+
+  Future<void> renameFolder(String path, String newName) async {
+    final client = _requireClient;
+    final boxes = await client.listMailboxes(recursive: true);
+    final box = boxes.where((b) => b.path == path).firstOrNull;
+    if (box == null) throw StateError('Dossier introuvable : $path');
+    // Renaming the selected mailbox invalidates the selection.
+    _selectedPath = null;
+    _selectedBox = null;
+    await client.renameMailbox(box, newName);
+  }
+
+  Future<void> deleteFolder(String path) async {
+    final client = _requireClient;
+    final boxes = await client.listMailboxes(recursive: true);
+    final box = boxes.where((b) => b.path == path).firstOrNull;
+    if (box == null) return;
+    _selectedPath = null;
+    _selectedBox = null;
+    await client.deleteMailbox(box);
   }
 
   /// Number of unseen messages in INBOX (UID SEARCH UNSEEN).

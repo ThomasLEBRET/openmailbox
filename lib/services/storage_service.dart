@@ -126,7 +126,7 @@ class StorageService {
     final dbPath = p.join(dir.path, 'openmailbox.db');
     final db = await openDatabase(
       dbPath,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute(_createEmailsTable);
         await db.execute(_createFoldersTable);
@@ -140,6 +140,20 @@ class StorageService {
           await db.execute('DROP TABLE IF EXISTS folders');
           await db.execute(_createEmailsTable);
           await db.execute(_createFoldersTable);
+        }
+        if (oldVersion < 6) {
+          // v6 adds recipients + label keywords. Idempotent.
+          final columns = (await db.rawQuery('PRAGMA table_info(emails)'))
+              .map((row) => row['name'] as String)
+              .toSet();
+          if (!columns.contains('recipients')) {
+            await db.execute(
+                "ALTER TABLE emails ADD COLUMN recipients TEXT NOT NULL DEFAULT ''");
+          }
+          if (!columns.contains('labels')) {
+            await db.execute(
+                "ALTER TABLE emails ADD COLUMN labels TEXT NOT NULL DEFAULT ''");
+          }
         }
         if (oldVersion < 5) {
           // v5 adds the \Flagged star. Idempotent per the migration rule.
@@ -169,6 +183,8 @@ class StorageService {
       preview TEXT NOT NULL,
       isRead INTEGER NOT NULL,
       isFlagged INTEGER NOT NULL DEFAULT 0,
+      recipients TEXT NOT NULL DEFAULT '',
+      labels TEXT NOT NULL DEFAULT '',
       body TEXT,
       bodyIsHtml INTEGER,
       PRIMARY KEY (account, folder, uid)
@@ -238,8 +254,8 @@ class StorageService {
         '''
         INSERT INTO emails
           (account, uid, folder, "from", fromEmail, subject, date, preview,
-           isRead, isFlagged)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           isRead, isFlagged, recipients, labels)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account, folder, uid) DO UPDATE SET
           "from" = excluded."from",
           fromEmail = excluded.fromEmail,
@@ -247,7 +263,9 @@ class StorageService {
           date = excluded.date,
           preview = excluded.preview,
           isRead = excluded.isRead,
-          isFlagged = excluded.isFlagged
+          isFlagged = excluded.isFlagged,
+          recipients = excluded.recipients,
+          labels = excluded.labels
         ''',
         [
           accountId,
@@ -260,6 +278,8 @@ class StorageService {
           email.preview,
           email.isRead ? 1 : 0,
           email.isFlagged ? 1 : 0,
+          email.to,
+          email.labels.join(' '),
         ],
       );
     }
@@ -288,6 +308,17 @@ class StorageService {
     );
   }
 
+  Future<void> setLabels(
+      String accountId, String folder, int uid, List<String> labels) async {
+    final db = await _database();
+    await db.update(
+      'emails',
+      {'labels': labels.join(' ')},
+      where: 'account = ? AND folder = ? AND uid = ?',
+      whereArgs: [accountId, folder, uid],
+    );
+  }
+
   Future<void> setFlagged(
       String accountId, String folder, int uid, bool isFlagged) async {
     final db = await _database();
@@ -306,6 +337,13 @@ class StorageService {
       where: 'account = ? AND folder = ? AND uid = ?',
       whereArgs: [accountId, folder, uid],
     );
+  }
+
+  /// Removes the cached emails of one folder (folder deleted on server).
+  Future<void> deleteAccountFolder(String accountId, String folder) async {
+    final db = await _database();
+    await db.delete('emails',
+        where: 'account = ? AND folder = ?', whereArgs: [accountId, folder]);
   }
 
   /// Removes every cached row of a deleted account.
@@ -355,6 +393,11 @@ class StorageService {
       preview: row['preview']! as String,
       isRead: (row['isRead']! as int) == 1,
       isFlagged: ((row['isFlagged'] as int?) ?? 0) == 1,
+      to: (row['recipients'] as String?) ?? '',
+      labels: ((row['labels'] as String?) ?? '')
+          .split(' ')
+          .where((s) => s.isNotEmpty)
+          .toList(),
     );
   }
 }

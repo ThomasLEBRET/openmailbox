@@ -17,6 +17,9 @@ abstract class Email with _$Email {
 
     /// Bare address of the sender, used for replies.
     @Default('') String fromEmail,
+
+    /// Recipient addresses (To), comma-joined for display.
+    @Default('') String to,
     required String subject,
     required DateTime date,
 
@@ -26,6 +29,9 @@ abstract class Email with _$Email {
 
     /// IMAP \Flagged — starred/favori.
     @Default(false) bool isFlagged,
+
+    /// Custom IMAP keywords (label slugs, "om_…") set on this message.
+    @Default([]) List<String> labels,
   }) = _Email;
 
   factory Email.fromJson(Map<String, dynamic> json) =>

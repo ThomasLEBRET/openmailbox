@@ -79,6 +79,44 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
       // Offline — the local copy still applies; sync happens next time.
     }
   }
+
+  Future<void> upsertLabel(LabelDef label) async {
+    final current = state.value ?? const AppPrefs();
+    final others =
+        current.labels.where((l) => l.slug != label.slug).toList();
+    await _saveAll(current.copyWith(labels: [...others, label]));
+  }
+
+  Future<void> removeLabel(String slug) async {
+    final current = state.value ?? const AppPrefs();
+    await _saveAll(current.copyWith(
+        labels: current.labels.where((l) => l.slug != slug).toList()));
+  }
+
+  Future<void> setFolderColor(String path, int? colorValue) async {
+    final current = state.value ?? const AppPrefs();
+    final colors = Map<String, int>.from(current.folderColors);
+    if (colorValue == null) {
+      colors.remove(path);
+    } else {
+      colors[path] = colorValue;
+    }
+    await _saveAll(current.copyWith(folderColors: colors));
+  }
+
+  Future<void> _saveAll(AppPrefs next) async {
+    final stamped = next.copyWith(
+        updatedAt: DateTime.now().millisecondsSinceEpoch);
+    state = AsyncData(stamped);
+    await ref.read(storageServiceProvider).savePrefs(stamped);
+    try {
+      final json = jsonEncode(stamped.toJson());
+      await withImapSession(ref, (imap) => imap.pushPrefsJson(json),
+          background: true);
+    } catch (_) {
+      // Offline — syncs next time.
+    }
+  }
 }
 
 final prefsProvider = AsyncNotifierProvider<PrefsNotifier, AppPrefs>(

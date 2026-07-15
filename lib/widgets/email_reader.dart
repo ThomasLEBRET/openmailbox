@@ -18,6 +18,7 @@ class EmailReader extends StatelessWidget {
     required this.onForward,
     required this.onDelete,
     required this.onToggleRead,
+    this.onLabel,
   });
 
   final Email email;
@@ -27,6 +28,7 @@ class EmailReader extends StatelessWidget {
   final VoidCallback onForward;
   final VoidCallback onDelete;
   final VoidCallback onToggleRead;
+  final VoidCallback? onLabel;
 
   static Future<void> _openLink(String? url) async {
     if (url == null || url.isEmpty) return;
@@ -79,6 +81,15 @@ class EmailReader extends StatelessWidget {
                 shortcut: 'U',
                 onPressed: onToggleRead,
               ),
+              if (onLabel != null) ...[
+                const SizedBox(width: 6),
+                _ToolbarButton(
+                  icon: Icons.label_outline_rounded,
+                  label: 'Étiqueter',
+                  shortcut: 'L',
+                  onPressed: onLabel!,
+                ),
+              ],
               const Spacer(),
               _ToolbarButton(
                 icon: Icons.delete_outline_rounded,
@@ -133,6 +144,16 @@ class EmailReader extends StatelessWidget {
                             fontSize: 13.5,
                           ),
                         ),
+                        if (email.to.isNotEmpty)
+                          Text(
+                            'À : ${email.to}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
                         Text(
                           formatEmailDate(email.date),
                           style: TextStyle(

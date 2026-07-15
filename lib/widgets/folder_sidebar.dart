@@ -6,6 +6,8 @@ import '../models/folder.dart';
 import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
+import '../models/prefs.dart';
+import '../providers/prefs_provider.dart';
 import '../theme.dart';
 
 /// Dark ProtonMail-style sidebar: compose button, folder list, settings.
@@ -161,20 +163,36 @@ class FolderSidebar extends ConsumerWidget {
                           onTap: () => _selectFolder(ref, folder.path),
                           onAcceptEmail: (email) =>
                               _moveEmail(context, ref, email, folder.path),
+                          onContextMenu: (position) => _folderMenu(
+                              context, ref, folder.path, position,
+                              isSystem: true),
                         ),
-                      if (custom.isNotEmpty) ...[
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 16, 12, 6),
-                          child: Text(
-                            'DOSSIERS',
-                            style: TextStyle(
-                              color: side.muted,
-                              fontSize: 10.5,
-                              letterSpacing: 1.2,
-                              fontWeight: FontWeight.w700,
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 14, 4, 2),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'DOSSIERS',
+                                style: TextStyle(
+                                  color: side.muted,
+                                  fontSize: 10.5,
+                                  letterSpacing: 1.2,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
-                          ),
+                            IconButton(
+                              tooltip: 'Nouveau dossier',
+                              visualDensity: VisualDensity.compact,
+                              icon: Icon(Icons.create_new_folder_outlined,
+                                  size: 17, color: side.muted),
+                              onPressed: () => _createFolder(context, ref),
+                            ),
+                          ],
                         ),
+                      ),
+                      if (custom.isNotEmpty) ...[
                         for (final folder in custom)
                           _FolderTile(
                             folder: folder,
@@ -184,6 +202,9 @@ class FolderSidebar extends ConsumerWidget {
                             onTap: () => _selectFolder(ref, folder.path),
                             onAcceptEmail: (email) =>
                                 _moveEmail(context, ref, email, folder.path),
+                            onContextMenu: (position) => _folderMenu(
+                                context, ref, folder.path, position,
+                                isSystem: false),
                           ),
                       ],
                     ],
@@ -239,6 +260,197 @@ class FolderSidebar extends ConsumerWidget {
         behavior: SnackBarBehavior.floating,
         width: 420,
       ));
+    }
+  }
+
+  Future<void> _createFolder(BuildContext context, WidgetRef ref) async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Nouveau dossier'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Nom du dossier'),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Créer'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.trim().isEmpty) return;
+    try {
+      await ref.read(folderListProvider.notifier).createFolder(name.trim());
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Échec de la création : $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _folderMenu(BuildContext context, WidgetRef ref, String path,
+      Offset position,
+      {required bool isSystem}) async {
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+          position.dx, position.dy, position.dx + 1, position.dy + 1),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      items: [
+        const PopupMenuItem(value: 'color', child: Text('Couleur…')),
+        if (!isSystem) ...[
+          const PopupMenuItem(value: 'rename', child: Text('Renommer…')),
+          const PopupMenuItem(
+            value: 'delete',
+            child: Text('Supprimer', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ],
+    );
+    if (action == null || !context.mounted) return;
+
+    switch (action) {
+      case 'color':
+        await _pickFolderColor(context, ref, path);
+      case 'rename':
+        await _renameFolder(context, ref, path);
+      case 'delete':
+        await _deleteFolder(context, ref, path);
+    }
+  }
+
+  Future<void> _pickFolderColor(
+      BuildContext context, WidgetRef ref, String path) async {
+    final current =
+        ref.read(prefsProvider).value?.folderColors[path];
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Couleur du dossier'),
+        content: Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final (name, value) in accentChoices)
+              Tooltip(
+                message: name,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => Navigator.of(context).pop(value),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Color(value),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: current == value
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Colors.transparent,
+                        width: 2.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(0),
+            child: const Text('Par défaut'),
+          ),
+        ],
+      ),
+    );
+    if (picked == null) return;
+    await ref
+        .read(prefsProvider.notifier)
+        .setFolderColor(path, picked == 0 ? null : picked);
+  }
+
+  Future<void> _renameFolder(
+      BuildContext context, WidgetRef ref, String path) async {
+    final controller = TextEditingController(text: path.split('/').last);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Renommer le dossier'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Renommer'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.trim().isEmpty || name.trim() == path) return;
+    try {
+      await ref
+          .read(folderListProvider.notifier)
+          .renameFolder(path, name.trim());
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Échec du renommage : $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteFolder(
+      BuildContext context, WidgetRef ref, String path) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Supprimer « ${path.split('/').last} » ?'),
+        content: const Text(
+            'Le dossier et les emails qu\'il contient seront supprimés '
+            'sur le serveur.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(folderListProvider.notifier).deleteFolder(path);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Échec de la suppression : $e')),
+        );
+      }
     }
   }
 
@@ -384,6 +596,7 @@ class _FolderTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.onAcceptEmail,
+    this.onContextMenu,
   });
 
   final Folder folder;
@@ -392,6 +605,7 @@ class _FolderTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final ValueChanged<Email>? onAcceptEmail;
+  final ValueChanged<Offset>? onContextMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -436,13 +650,26 @@ class _FolderTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
+            hoverColor: (side as dynamic).text.withValues(alpha: 0.10)
+                as Color,
             onTap: onTap,
+            onSecondaryTapDown: onContextMenu == null
+                ? null
+                : (details) => onContextMenu!(details.globalPosition),
             child: Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(
                 children: [
-                  Icon(icon, size: 19, color: color),
+                  Consumer(builder: (context, ref, _) {
+                    final custom = ref
+                        .watch(prefsProvider)
+                        .value
+                        ?.folderColors[folder.path];
+                    return Icon(icon,
+                        size: 19,
+                        color: custom != null ? Color(custom) : color);
+                  }),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(

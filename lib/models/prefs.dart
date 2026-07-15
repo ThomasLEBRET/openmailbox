@@ -4,6 +4,34 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 part 'prefs.freezed.dart';
 part 'prefs.g.dart';
 
+/// A user-defined label, synced as an IMAP keyword (`om_slug`).
+@freezed
+abstract class LabelDef with _$LabelDef {
+  const factory LabelDef({
+    required String slug,
+    required String name,
+    required int colorValue,
+  }) = _LabelDef;
+
+  factory LabelDef.fromJson(Map<String, dynamic> json) =>
+      _$LabelDefFromJson(json);
+}
+
+/// Turns a label name into its IMAP keyword slug.
+String labelSlug(String name) {
+  final cleaned = name
+      .toLowerCase()
+      .replaceAll(RegExp(r'[àâä]'), 'a')
+      .replaceAll(RegExp(r'[éèêë]'), 'e')
+      .replaceAll(RegExp(r'[îï]'), 'i')
+      .replaceAll(RegExp(r'[ôö]'), 'o')
+      .replaceAll(RegExp(r'[ùûü]'), 'u')
+      .replaceAll('ç', 'c')
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+      .replaceAll(RegExp(r'^_+|_+$'), '');
+  return 'om_$cleaned';
+}
+
 /// UI customization, synced across devices through a dedicated IMAP
 /// folder — [updatedAt] resolves conflicts (latest wins).
 @freezed
@@ -39,6 +67,12 @@ abstract class AppPrefs with _$AppPrefs {
 
     /// Undo window before an email is actually sent (0 = immediate).
     @Default(10) int undoSendSeconds,
+
+    /// User-defined labels (synced across devices like the rest).
+    @Default([]) List<LabelDef> labels,
+
+    /// Custom folder colors: IMAP path → ARGB value.
+    @Default({}) Map<String, int> folderColors,
     @Default(0) int updatedAt,
   }) = _AppPrefs;
 
