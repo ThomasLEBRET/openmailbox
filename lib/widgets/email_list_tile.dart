@@ -92,6 +92,9 @@ class _EmailListTileState extends ConsumerState<EmailListTile> {
                   ? DismissDirection.endToStart
                   : DismissDirection.none;
 
+      SwipeAction actionFor(DismissDirection dir) =>
+          dir == DismissDirection.startToEnd ? right : left;
+
       wrapped = Dismissible(
         key: ValueKey('${email.folder}-${email.uid}'),
         direction: direction,
@@ -100,13 +103,16 @@ class _EmailListTileState extends ConsumerState<EmailListTile> {
             : null,
         secondaryBackground:
             leftCb != null ? _swipeBackground(left, alignStart: false) : null,
-        // Always return false: the action itself removes the row from the
-        // list when needed (delete/move) via the provider, so Dismissible
-        // never has to detach it — avoids "dismissed widget still in tree".
+        // Destructive actions (delete/move) let the row animate out and
+        // run in onDismissed — smooth. Non-destructive ones (read/flag)
+        // run immediately and keep the row (return false), no bounce-back.
         confirmDismiss: (dir) async {
-          (dir == DismissDirection.startToEnd ? rightCb : leftCb)?.call();
+          final action = actionFor(dir);
+          if (action.isDestructive) return true;
+          _actionFor(action)?.call();
           return false;
         },
+        onDismissed: (dir) => _actionFor(actionFor(dir))?.call(),
         child: card,
       );
     } else if (!isMobile) {

@@ -23,6 +23,7 @@ class FolderSidebar extends ConsumerWidget {
     required this.onOpenSettings,
     required this.onAddAccount,
     this.onOpenAppearance,
+    this.onSync,
     this.onFolderSelected,
   });
 
@@ -30,6 +31,7 @@ class FolderSidebar extends ConsumerWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onAddAccount;
   final VoidCallback? onOpenAppearance;
+  final VoidCallback? onSync;
 
   /// Called after a folder tap (used to close the drawer on mobile).
   final VoidCallback? onFolderSelected;
@@ -213,6 +215,16 @@ class FolderSidebar extends ConsumerWidget {
               ),
             ),
             Divider(color: side.divider),
+            if (onSync != null)
+              ListTile(
+                dense: true,
+                leading: Icon(Icons.sync_rounded, color: side.text, size: 20),
+                title: Text(
+                  'Synchroniser',
+                  style: TextStyle(color: side.text, fontSize: 14),
+                ),
+                onTap: onSync,
+              ),
             ListTile(
               dense: true,
               leading: Icon(Icons.palette_outlined, color: side.text, size: 20),

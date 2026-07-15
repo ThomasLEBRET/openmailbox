@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/config.dart';
 import '../providers/config_provider.dart';
@@ -385,6 +386,8 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                               size: 18),
                           label: const Text('Supprimer ce compte'),
                         ),
+                        const SizedBox(height: 16),
+                        Center(child: _VersionLabel()),
                       ],
                     ],
                   ),
@@ -437,6 +440,37 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
           return null;
         },
       ),
+    );
+  }
+}
+
+/// Shows "OpenMailbox vX.Y.Z (build)" — read once from the platform.
+class _VersionLabel extends StatefulWidget {
+  @override
+  State<_VersionLabel> createState() => _VersionLabelState();
+}
+
+class _VersionLabelState extends State<_VersionLabel> {
+  String _text = '';
+
+  @override
+  void initState() {
+    super.initState();
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) {
+        setState(() =>
+            _text = 'OpenMailbox v${info.version} (${info.buildNumber})');
+      }
+    }).catchError((_) {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _text,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
     );
   }
 }

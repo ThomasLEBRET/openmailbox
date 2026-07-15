@@ -155,12 +155,9 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 700),
-        child: Form(
+    final content = Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -334,7 +331,17 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
               ),
             ],
           ),
-        ),
+        );
+
+    // Full-screen page on phones; centered dialog on desktop.
+    if (isMobile) {
+      return Scaffold(body: SafeArea(child: content));
+    }
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 700),
+        child: content,
       ),
     );
   }

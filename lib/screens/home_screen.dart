@@ -417,14 +417,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Future<void> _openCompose(
       {String to = '', String subject = '', String body = ''}) async {
-    final result = await showDialog<Object>(
-      context: context,
-      builder: (_) => ComposeScreen(
-        initialTo: to,
-        initialSubject: subject,
-        initialBody: body,
-      ),
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final compose = ComposeScreen(
+      initialTo: to,
+      initialSubject: subject,
+      initialBody: body,
     );
+    // Full-screen route on phones, centered dialog on desktop.
+    final result = isMobile
+        ? await Navigator.of(context).push<Object>(
+            MaterialPageRoute(builder: (_) => compose, fullscreenDialog: true),
+          )
+        : await showDialog<Object>(
+            context: context, builder: (_) => compose);
     if (result is Future<void> Function() && mounted) {
       scheduleSend(
         ScaffoldMessenger.of(context),
@@ -636,6 +641,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       onCompose: () {
         if (!isDesktop) Navigator.of(context).maybePop();
         _openCompose();
+      },
+      onSync: () {
+        if (!isDesktop) Navigator.of(context).maybePop();
+        _refreshAll();
+        _notify('Synchronisation…');
       },
       onOpenSettings: () {
         if (!isDesktop) Navigator.of(context).maybePop();
