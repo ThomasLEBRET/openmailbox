@@ -109,6 +109,10 @@ ThemeData buildTheme(
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
+      isDense: true,
+      // Tighter than the airy Material 3 default — better on phones and
+      // fine on desktop.
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),

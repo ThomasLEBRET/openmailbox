@@ -1,9 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for IMAP/SMTP; the release manifest previously lacked it
+         (only debug/profile had it), so release builds couldn't resolve
+         any host ("failed host lookup"). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- New-mail notifications on Android 13+ (runtime-requested). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <!-- allowBackup=false keeps the local email cache (SQLite) and config
          out of adb/cloud backups; credentials already live in the
          Keystore, which is never backed up. -->
     <application
-        android:label="openmailbox"
+        android:label="OpenMailbox"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false">

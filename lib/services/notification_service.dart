@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 /// Native notifications (macOS / Android) for new-mail alerts, with the
@@ -18,6 +20,14 @@ class NotificationService {
     );
     try {
       await _plugin.initialize(settings: settings);
+      // Android 13+ needs an explicit runtime request for POST_NOTIFICATIONS
+      // (Darwin permissions are asked via the init settings above).
+      if (Platform.isAndroid) {
+        await _plugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
+      }
       _ready = true;
     } catch (_) {
       // Notifications unavailable (permission denied, headless test…) —
@@ -36,10 +46,12 @@ class NotificationService {
             : '$newCount nouveaux messages dans votre boîte de réception',
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(badgeNumber: unreadTotal),
-          android: const AndroidNotificationDetails(
+          android: AndroidNotificationDetails(
             'new_mail',
             'Nouveaux messages',
             importance: Importance.defaultImportance,
+            // Badge count on launchers that support it.
+            number: unreadTotal,
           ),
         ),
       );

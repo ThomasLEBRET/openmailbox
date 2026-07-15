@@ -207,6 +207,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final compact = MediaQuery.of(context).size.width < 600;
 
     return Scaffold(
       appBar: widget.isEditing
@@ -216,7 +217,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
               : null,
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(compact ? 12 : 24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 460),
             child: Card(
@@ -228,7 +229,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
                 ),
               ),
               child: Padding(
-                padding: const EdgeInsets.all(32),
+                padding: EdgeInsets.all(compact ? 18 : 32),
                 child: Form(
                   key: _formKey,
                   child: Column(
