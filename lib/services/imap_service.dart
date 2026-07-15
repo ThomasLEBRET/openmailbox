@@ -177,6 +177,10 @@ class ImapService {
     return box;
   }
 
+  /// The prefs-sync folder is app plumbing, never shown to the user.
+  static bool _isInternalFolder(Mailbox box) =>
+      box.name == _prefsFolder || box.path == _prefsFolder;
+
   /// Lists selectable folders with their message counts.
   ///
   /// Uses LIST-STATUS (RFC 5819) when the server supports it — one round
@@ -198,7 +202,8 @@ class ImapService {
         ),
       );
       return [
-        for (final box in mailboxes.where((b) => !b.isNotSelectable))
+        for (final box in mailboxes
+            .where((b) => !b.isNotSelectable && !_isInternalFolder(b)))
           Folder(
             name: box.name,
             path: box.path,
@@ -210,8 +215,9 @@ class ImapService {
 
     final mailboxes =
         await _timed('list', () => client.listMailboxes(recursive: true));
-    final selectable =
-        mailboxes.where((box) => !box.isNotSelectable).toList();
+    final selectable = mailboxes
+        .where((box) => !box.isNotSelectable && !_isInternalFolder(box))
+        .toList();
 
     final statuses = await _timed(
         'status x${selectable.length}',

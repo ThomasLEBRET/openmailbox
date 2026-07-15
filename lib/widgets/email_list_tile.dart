@@ -398,28 +398,35 @@ class _LabelChips extends ConsumerWidget {
     ].nonNulls.take(3).toList();
     if (matched.isEmpty) return const SizedBox.shrink();
 
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Wrap(
       spacing: 6,
       children: [
         for (final label in matched)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-            decoration: BoxDecoration(
-              color: Color(label.colorValue).withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: Color(label.colorValue).withValues(alpha: 0.6),
+          Builder(builder: (context) {
+            final base = Color(label.colorValue);
+            // Shift the text toward white (dark theme) or black (light
+            // theme) so mid-brightness hues like green stay readable.
+            final text = Color.lerp(
+                base, dark ? Colors.white : Colors.black, dark ? 0.45 : 0.4)!;
+            return Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              decoration: BoxDecoration(
+                color: base.withValues(alpha: dark ? 0.28 : 0.14),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: base.withValues(alpha: 0.65)),
               ),
-            ),
-            child: Text(
-              label.name,
-              style: TextStyle(
-                fontSize: 10.5,
-                color: Color(label.colorValue),
-                fontWeight: FontWeight.w600,
+              child: Text(
+                label.name,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: text,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          ),
+            );
+          }),
       ],
     );
   }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/folder.dart';
@@ -70,31 +72,64 @@ class FolderListNotifier extends AsyncNotifier<List<Folder>> {
     state = result;
   }
 
+  // Folder CRUD is optimistic: the sidebar updates instantly, the server
+  // call runs right after (rollback on failure) and a background refresh
+  // reconciles — awaiting Mailo's full re-listing took seconds.
+
   Future<void> createFolder(String name) async {
-    await withImapSession(ref, (imap) => imap.createFolder(name));
-    await refresh();
+    final previous = state.value ?? const <Folder>[];
+    state = AsyncData([...previous, Folder(name: name, path: name)]);
+    try {
+      await withImapSession(ref, (imap) => imap.createFolder(name));
+    } catch (_) {
+      state = AsyncData(previous);
+      rethrow;
+    }
+    unawaited(refresh());
   }
 
   Future<void> renameFolder(String path, String newName) async {
-    await withImapSession(ref, (imap) => imap.renameFolder(path, newName));
+    final previous = state.value ?? const <Folder>[];
+    state = AsyncData([
+      for (final folder in previous)
+        if (folder.path == path)
+          folder.copyWith(name: newName, path: newName)
+        else
+          folder,
+    ]);
     if (ref.read(currentFolderProvider) == path) {
       ref.read(currentFolderProvider.notifier).select('INBOX');
     }
-    await refresh();
+    try {
+      await withImapSession(ref, (imap) => imap.renameFolder(path, newName));
+    } catch (_) {
+      state = AsyncData(previous);
+      rethrow;
+    }
+    unawaited(refresh());
   }
 
   Future<void> deleteFolder(String path) async {
-    await withImapSession(ref, (imap) => imap.deleteFolder(path));
-    final account = ref.read(currentAccountProvider);
-    if (account != null) {
-      // Purge the cached emails of the removed folder.
-      await ref.read(storageServiceProvider).deleteAccountFolder(
-          account.id, path);
-    }
+    final previous = state.value ?? const <Folder>[];
+    state = AsyncData(
+        previous.where((folder) => folder.path != path).toList());
     if (ref.read(currentFolderProvider) == path) {
       ref.read(currentFolderProvider.notifier).select('INBOX');
     }
-    await refresh();
+    try {
+      await withImapSession(ref, (imap) => imap.deleteFolder(path));
+    } catch (_) {
+      state = AsyncData(previous);
+      rethrow;
+    }
+    final account = ref.read(currentAccountProvider);
+    if (account != null) {
+      // Purge the cached emails of the removed folder.
+      unawaited(ref
+          .read(storageServiceProvider)
+          .deleteAccountFolder(account.id, path));
+    }
+    unawaited(refresh());
   }
 
   /// Optimistically shifts the counts of [path] (e.g. unread -1 when an

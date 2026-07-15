@@ -264,28 +264,11 @@ class FolderSidebar extends ConsumerWidget {
   }
 
   Future<void> _createFolder(BuildContext context, WidgetRef ref) async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Nouveau dossier'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Nom du dossier'),
-          onSubmitted: (value) => Navigator.of(context).pop(value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Annuler'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Créer'),
-          ),
-        ],
-      ),
+    final name = await _promptText(
+      context,
+      title: 'Nouveau dossier',
+      hint: 'Nom du dossier',
+      confirmLabel: 'Créer',
     );
     if (name == null || name.trim().isEmpty) return;
     try {
@@ -297,6 +280,76 @@ class FolderSidebar extends ConsumerWidget {
         );
       }
     }
+  }
+
+  /// Compact prompt dialog: 360px, title row with a close cross,
+  /// Enter submits.
+  Future<String?> _promptText(
+    BuildContext context, {
+    required String title,
+    required String confirmLabel,
+    String hint = '',
+    String initial = '',
+  }) {
+    final controller = TextEditingController(text: initial);
+    return showDialog<String>(
+      context: context,
+      builder: (context) => Dialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 340),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 10, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                            fontSize: 14.5, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      tooltip: 'Fermer',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  style: const TextStyle(fontSize: 13.5),
+                  decoration: InputDecoration(
+                    hintText: hint,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                  onSubmitted: (value) => Navigator.of(context).pop(value),
+                ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilledButton(
+                    onPressed: () =>
+                        Navigator.of(context).pop(controller.text),
+                    child: Text(confirmLabel),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _folderMenu(BuildContext context, WidgetRef ref, String path,
@@ -336,42 +389,73 @@ class FolderSidebar extends ConsumerWidget {
         ref.read(prefsProvider).value?.folderColors[path];
     final picked = await showDialog<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Couleur du dossier'),
-        content: Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final (name, value) in accentChoices)
-              Tooltip(
-                message: name,
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: () => Navigator.of(context).pop(value),
-                  child: Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: Color(value),
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: current == value
-                            ? Theme.of(context).colorScheme.onSurface
-                            : Colors.transparent,
-                        width: 2.5,
+      builder: (context) => Dialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 10, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Couleur du dossier',
+                        style: TextStyle(
+                            fontSize: 14.5, fontWeight: FontWeight.w700),
                       ),
                     ),
-                  ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      tooltip: 'Fermer',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
                 ),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(0),
-            child: const Text('Par défaut'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final (name, value) in accentChoices)
+                      Tooltip(
+                        message: name,
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => Navigator.of(context).pop(value),
+                          child: Container(
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              color: Color(value),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: current == value
+                                    ? Theme.of(context).colorScheme.onSurface
+                                    : Colors.transparent,
+                                width: 2.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(0),
+                  child: const Text('Par défaut',
+                      style: TextStyle(fontSize: 12.5)),
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
     if (picked == null) return;
@@ -382,27 +466,11 @@ class FolderSidebar extends ConsumerWidget {
 
   Future<void> _renameFolder(
       BuildContext context, WidgetRef ref, String path) async {
-    final controller = TextEditingController(text: path.split('/').last);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Renommer le dossier'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          onSubmitted: (value) => Navigator.of(context).pop(value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Annuler'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Renommer'),
-          ),
-        ],
-      ),
+    final name = await _promptText(
+      context,
+      title: 'Renommer le dossier',
+      initial: path.split('/').last,
+      confirmLabel: 'Renommer',
     );
     if (name == null || name.trim().isEmpty || name.trim() == path) return;
     try {
