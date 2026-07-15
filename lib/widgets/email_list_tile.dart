@@ -54,9 +54,46 @@ class _EmailListTileState extends State<EmailListTile> {
     // border + shadow + gap — with a purple left edge for unread and an
     // accent outline when selected.
     final accent = AppColors.accentOf(context);
+
+    final dragFeedback = Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: accent),
+          boxShadow: const [
+            BoxShadow(color: Colors.black38, blurRadius: 12),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.drive_file_move_outlined, size: 16, color: accent),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 260),
+              child: Text(
+                email.subject,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: scheme.onSurface),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 3 : 5),
-      child: MouseRegion(
+      child: Draggable<Email>(
+        data: email,
+        feedback: dragFeedback,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        childWhenDragging: Opacity(opacity: 0.35, child: _card(context)),
+        child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: Material(
@@ -220,6 +257,33 @@ class _EmailListTileState extends State<EmailListTile> {
                 ],
               ),
             ),
+          ),
+        ),
+        ),
+      ),
+    );
+  }
+
+  /// Static snapshot of the card used as childWhenDragging.
+  Widget _card(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: scheme.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      child: SizedBox(
+        height: 60,
+        child: Center(
+          child: Text(
+            widget.email.subject,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: 12.5, color: scheme.onSurfaceVariant),
           ),
         ),
       ),

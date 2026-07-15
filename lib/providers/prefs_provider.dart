@@ -48,6 +48,7 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
     double? listWidth,
     bool? hideReader,
     bool? blockRemoteImages,
+    int? undoSendSeconds,
   }) async {
     final current = state.value ?? const AppPrefs();
     final next = current.copyWith(
@@ -63,6 +64,7 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
       listWidth: listWidth ?? current.listWidth,
       hideReader: hideReader ?? current.hideReader,
       blockRemoteImages: blockRemoteImages ?? current.blockRemoteImages,
+      undoSendSeconds: undoSendSeconds ?? current.undoSendSeconds,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     state = AsyncData(next);

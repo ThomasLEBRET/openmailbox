@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/email.dart';
 import '../models/folder.dart';
 import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
@@ -158,6 +159,8 @@ class FolderSidebar extends ConsumerWidget {
                           label: roles[folder.path]!.$2,
                           selected: folder.path == currentFolder,
                           onTap: () => _selectFolder(ref, folder.path),
+                          onAcceptEmail: (email) =>
+                              _moveEmail(context, ref, email, folder.path),
                         ),
                       if (custom.isNotEmpty) ...[
                         Padding(
@@ -179,6 +182,8 @@ class FolderSidebar extends ConsumerWidget {
                             label: folder.name,
                             selected: folder.path == currentFolder,
                             onTap: () => _selectFolder(ref, folder.path),
+                            onAcceptEmail: (email) =>
+                                _moveEmail(context, ref, email, folder.path),
                           ),
                       ],
                     ],
@@ -211,6 +216,30 @@ class FolderSidebar extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _moveEmail(
+      BuildContext context, WidgetRef ref, Email email, String target) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(emailListProvider.notifier)
+          .moveToFolder(email.uid, target);
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+          content: Text('Déplacé vers $target — ⌘Z pour annuler'),
+          behavior: SnackBarBehavior.floating,
+          width: 420,
+          duration: const Duration(seconds: 3),
+        ));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Échec du déplacement : $e'),
+        behavior: SnackBarBehavior.floating,
+        width: 420,
+      ));
+    }
   }
 
   void _selectFolder(WidgetRef ref, String path) {
@@ -354,6 +383,7 @@ class _FolderTile extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.onAcceptEmail,
   });
 
   final Folder folder;
@@ -361,6 +391,7 @@ class _FolderTile extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final ValueChanged<Email>? onAcceptEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -368,6 +399,27 @@ class _FolderTile extends StatelessWidget {
     final color = selected ? side.textSelected : side.text;
     final read = folder.total - folder.unread;
 
+    return DragTarget<Email>(
+      onWillAcceptWithDetails: (details) =>
+          onAcceptEmail != null && details.data.folder != folder.path,
+      onAcceptWithDetails: (details) => onAcceptEmail?.call(details.data),
+      builder: (context, candidates, _) => _tile(
+        context,
+        side: side,
+        color: color,
+        read: read,
+        highlighted: candidates.isNotEmpty,
+      ),
+    );
+  }
+
+  Widget _tile(
+    BuildContext context, {
+    required dynamic side,
+    required Color color,
+    required int read,
+    required bool highlighted,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Tooltip(
@@ -376,9 +428,11 @@ class _FolderTile extends StatelessWidget {
             '${folder.total} au total',
         waitDuration: const Duration(milliseconds: 600),
         child: Material(
-          color: selected
-              ? AppColors.accentOf(context).withValues(alpha: 0.35)
-              : Colors.transparent,
+          color: highlighted
+              ? AppColors.accentOf(context).withValues(alpha: 0.55)
+              : selected
+                  ? AppColors.accentOf(context).withValues(alpha: 0.35)
+                  : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),

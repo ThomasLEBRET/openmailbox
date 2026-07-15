@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/email.dart';
 import 'config_provider.dart';
 import 'folder_provider.dart';
 import 'imap_session.dart';
+import 'undo_provider.dart';
 
 /// True while a server sync of the email list is in flight. Drives the
 /// header spinner without blanking the cached list.
@@ -135,128 +138,190 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
   }
 
   /// Marks locally (snappy UI), then pushes the \Seen flag to the server
-  /// best-effort — the next sync reconciles if it fails.
-  Future<void> markRead(int uid, bool isRead) async {
-    final accountId = _accountId;
+  /// best-effort in the background — the next sync reconciles if it fails.
+  Future<void> markRead(int uid, bool isRead, {bool recordUndo = true}) async {
     final folder = ref.read(currentFolderProvider);
-    final storage = ref.read(storageServiceProvider);
     final previous = state.value
         ?.where((email) => email.uid == uid)
         .firstOrNull
         ?.isRead;
-    await storage.setRead(accountId, folder, uid, isRead);
-    state = state.whenData(
-      (emails) => [
-        for (final email in emails)
-          if (email.uid == uid) email.copyWith(isRead: isRead) else email,
-      ],
-    );
-    if (previous != null && previous != isRead) {
-      await ref
-          .read(folderListProvider.notifier)
-          .adjustCounts(folder, unreadDelta: isRead ? -1 : 1);
-    }
-    try {
-      await withImapSession(
-          ref, (imap) => imap.markSeen(folder, uid, isSeen: isRead));
-    } catch (_) {
-      // Best-effort; local state stays, next sync reconciles.
+    if (previous == null || previous == isRead) return;
+    await _applyRead(folder, uid, isRead);
+    if (recordUndo) {
+      ref.read(undoProvider.notifier).push(
+          isRead ? 'Marquer lu' : 'Marquer non lu',
+          () => _applyRead(folder, uid, previous));
     }
   }
 
-  /// Toggles the star locally then pushes \Flagged best-effort.
-  Future<void> toggleFlagged(int uid) async {
+  Future<void> _applyRead(String folder, int uid, bool isRead) async {
     final accountId = _accountId;
+    await ref
+        .read(storageServiceProvider)
+        .setRead(accountId, folder, uid, isRead);
+    if (ref.read(currentFolderProvider) == folder) {
+      state = state.whenData(
+        (emails) => [
+          for (final email in emails)
+            if (email.uid == uid) email.copyWith(isRead: isRead) else email,
+        ],
+      );
+    }
+    // Counters and server flag update happen in the background: awaiting
+    // the IMAP round trip here is what made read-toggles feel laggy.
+    unawaited(ref
+        .read(folderListProvider.notifier)
+        .adjustCounts(folder, unreadDelta: isRead ? -1 : 1));
+    unawaited(withImapSession(
+            ref, (imap) => imap.markSeen(folder, uid, isSeen: isRead))
+        .catchError((_) {}));
+  }
+
+  /// Toggles the star locally then pushes \Flagged in the background.
+  Future<void> toggleFlagged(int uid, {bool recordUndo = true}) async {
     final folder = ref.read(currentFolderProvider);
-    final email =
-        state.value?.where((e) => e.uid == uid).firstOrNull;
+    final email = state.value?.where((e) => e.uid == uid).firstOrNull;
     if (email == null) return;
     final flagged = !email.isFlagged;
+    await _applyFlag(folder, uid, flagged);
+    if (recordUndo) {
+      ref.read(undoProvider.notifier).push(
+          flagged ? 'Étoile' : 'Étoile retirée',
+          () => _applyFlag(folder, uid, !flagged));
+    }
+  }
+
+  Future<void> _applyFlag(String folder, int uid, bool flagged) async {
+    final accountId = _accountId;
     await ref
         .read(storageServiceProvider)
         .setFlagged(accountId, folder, uid, flagged);
-    state = state.whenData(
-      (emails) => [
-        for (final e in emails)
-          if (e.uid == uid) e.copyWith(isFlagged: flagged) else e,
-      ],
-    );
-    try {
-      await withImapSession(
-          ref, (imap) => imap.setFlagged(folder, uid, isFlagged: flagged));
-    } catch (_) {
-      // Best-effort; next sync reconciles.
+    if (ref.read(currentFolderProvider) == folder) {
+      state = state.whenData(
+        (emails) => [
+          for (final e in emails)
+            if (e.uid == uid) e.copyWith(isFlagged: flagged) else e,
+        ],
+      );
     }
+    unawaited(withImapSession(
+            ref, (imap) => imap.setFlagged(folder, uid, isFlagged: flagged))
+        .catchError((_) {}));
   }
 
-  /// Moves the email to the trash folder (or deletes permanently when
-  /// already in the trash). Optimistic: the email leaves the list and the
-  /// counts shift immediately; if the server call then fails, everything
-  /// is restored and the error rethrown for the caller to surface.
-  ///
-  /// Returns true when the email was moved to the trash, false when it
-  /// was permanently deleted.
-  Future<bool> deleteEmail(int uid) async {
+  /// Moves an email of the current folder to [targetPath] (drag & drop,
+  /// deletion-to-trash). Optimistic with rollback; records a Cmd+Z entry
+  /// when the server reports the new UID (COPYUID).
+  Future<void> moveToFolder(int uid, String targetPath,
+      {String undoLabel = 'Déplacement', bool recordUndo = true}) async {
     final accountId = _accountId;
     final folder = ref.read(currentFolderProvider);
+    if (folder == targetPath) return;
     final storage = ref.read(storageServiceProvider);
     final emails = state.value ?? const <Email>[];
     final removed = emails.where((email) => email.uid == uid).firstOrNull;
-    if (removed == null) return false;
+    if (removed == null) return;
     final wasUnread = !removed.isRead;
-
-    final folders = ref.read(folderListProvider).value ?? const [];
-    final trashPath = findTrashPath(folders);
-    final movesToTrash = trashPath != null && folder != trashPath;
     final folderNotifier = ref.read(folderListProvider.notifier);
+
+    Future<void> shiftCounts(int direction) async {
+      await folderNotifier.adjustCounts(
+        folder,
+        totalDelta: -direction,
+        unreadDelta: wasUnread ? -direction : 0,
+      );
+      await folderNotifier.adjustCounts(
+        targetPath,
+        totalDelta: direction,
+        unreadDelta: wasUnread ? direction : 0,
+      );
+    }
 
     // Optimistic local removal.
     state = AsyncData(
         emails.where((email) => email.uid != uid).toList(growable: false));
     await storage.deleteEmail(accountId, folder, uid);
-    await folderNotifier.adjustCounts(
-      folder,
-      totalDelta: -1,
-      unreadDelta: wasUnread ? -1 : 0,
-    );
-    if (movesToTrash) {
-      await folderNotifier.adjustCounts(
-        trashPath,
-        totalDelta: 1,
-        unreadDelta: wasUnread ? 1 : 0,
-      );
-    }
+    unawaited(shiftCounts(1));
 
+    final int? newUid;
     try {
-      if (movesToTrash) {
-        await withImapSession(
-            ref, (imap) => imap.moveToTrash(folder, uid, trashPath));
-      } else {
-        await withImapSession(
-            ref, (imap) => imap.deleteMessage(folder, uid));
-      }
+      newUid = await withImapSession(
+          ref, (imap) => imap.moveMessage(folder, uid, targetPath));
     } catch (_) {
       // Roll back: restore the email and the counts.
       final current = state.value ?? const <Email>[];
       final restored = [...current, removed]
         ..sort((a, b) => b.date.compareTo(a.date));
+      if (ref.read(currentFolderProvider) == folder) {
+        state = AsyncData(restored);
+      }
+      await storage.replaceFolderEmails(accountId, folder, restored);
+      unawaited(shiftCounts(-1));
+      rethrow;
+    }
+
+    final movedUid = newUid;
+    if (recordUndo && movedUid != null) {
+      ref.read(undoProvider.notifier).push(undoLabel, () async {
+        await withImapSession(
+            ref, (imap) => imap.moveMessage(targetPath, movedUid, folder));
+        unawaited(shiftCounts(-1));
+        // Refresh whichever of the two folders is on screen.
+        final visible = ref.read(currentFolderProvider);
+        if (visible == folder || visible == targetPath) {
+          unawaited(sync());
+        }
+      });
+    }
+  }
+
+  /// Moves the email to the trash folder (or deletes permanently when
+  /// already in the trash — not undoable). Returns true when it was
+  /// moved to the trash.
+  Future<bool> deleteEmail(int uid) async {
+    final accountId = _accountId;
+    final folder = ref.read(currentFolderProvider);
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final trashPath = findTrashPath(folders);
+
+    if (trashPath != null && folder != trashPath) {
+      await moveToFolder(uid, trashPath, undoLabel: 'Suppression');
+      return true;
+    }
+
+    // Permanent deletion inside the trash (or no trash folder found).
+    final storage = ref.read(storageServiceProvider);
+    final emails = state.value ?? const <Email>[];
+    final removed = emails.where((email) => email.uid == uid).firstOrNull;
+    if (removed == null) return false;
+    final wasUnread = !removed.isRead;
+    final folderNotifier = ref.read(folderListProvider.notifier);
+
+    state = AsyncData(
+        emails.where((email) => email.uid != uid).toList(growable: false));
+    await storage.deleteEmail(accountId, folder, uid);
+    unawaited(folderNotifier.adjustCounts(
+      folder,
+      totalDelta: -1,
+      unreadDelta: wasUnread ? -1 : 0,
+    ));
+
+    try {
+      await withImapSession(ref, (imap) => imap.deleteMessage(folder, uid));
+    } catch (_) {
+      final current = state.value ?? const <Email>[];
+      final restored = [...current, removed]
+        ..sort((a, b) => b.date.compareTo(a.date));
       state = AsyncData(restored);
       await storage.replaceFolderEmails(accountId, folder, restored);
-      await folderNotifier.adjustCounts(
+      unawaited(folderNotifier.adjustCounts(
         folder,
         totalDelta: 1,
         unreadDelta: wasUnread ? 1 : 0,
-      );
-      if (movesToTrash) {
-        await folderNotifier.adjustCounts(
-          trashPath,
-          totalDelta: -1,
-          unreadDelta: wasUnread ? -1 : 0,
-        );
-      }
+      ));
       rethrow;
     }
-    return movesToTrash;
+    return false;
   }
 }
 

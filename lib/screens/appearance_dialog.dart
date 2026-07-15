@@ -173,6 +173,20 @@ class AppearanceDialog extends ConsumerWidget {
                 onChanged: (value) =>
                     notifier.apply(blockRemoteImages: value),
               ),
+              const SizedBox(height: 12),
+              _label(context, 'Délai d\'annulation d\'envoi'),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('Aucun')),
+                  ButtonSegment(value: 5, label: Text('5 s')),
+                  ButtonSegment(value: 10, label: Text('10 s')),
+                  ButtonSegment(value: 30, label: Text('30 s')),
+                ],
+                selected: {prefs.undoSendSeconds},
+                onSelectionChanged: (selection) =>
+                    notifier.apply(undoSendSeconds: selection.first),
+              ),
             ],
           ),
         ),

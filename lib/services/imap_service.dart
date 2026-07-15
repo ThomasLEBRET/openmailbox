@@ -366,21 +366,31 @@ class ImapService {
     }
   }
 
-  /// Moves a message to [trashPath] (MOVE, with COPY+DELETE fallback for
-  /// servers without the MOVE extension).
-  Future<void> moveToTrash(
-      String folderPath, int uid, String trashPath) async {
+  /// Moves a message to [targetPath] (MOVE, with COPY+DELETE fallback for
+  /// servers without the MOVE extension). Returns the message's new UID
+  /// in the target folder when the server reports COPYUID (used to undo).
+  Future<int?> moveMessage(
+      String folderPath, int uid, String targetPath) async {
     final client = _requireClient;
     await _select(folderPath);
     final sequence = MessageSequence.fromId(uid, isUid: true);
+    GenericImapResult result;
     try {
-      await client.uidMove(sequence, targetMailboxPath: trashPath);
+      result =
+          await client.uidMove(sequence, targetMailboxPath: targetPath);
     } on ImapException {
-      await client.uidCopy(sequence, targetMailboxPath: trashPath);
+      result =
+          await client.uidCopy(sequence, targetMailboxPath: targetPath);
       await client.uidMarkDeleted(sequence);
       await client.expunge();
     }
+    final targetSequence = result.responseCodeCopyUid?.targetSequence;
+    return targetSequence?.toList().firstOrNull;
   }
+
+  /// Backward-compatible name used by the delete flow.
+  Future<int?> moveToTrash(String folderPath, int uid, String trashPath) =>
+      moveMessage(folderPath, uid, trashPath);
 
   /// Server-side search (IMAP SEARCH TEXT) in [folderPath]; returns the
   /// most recent [limit] matches as envelope metadata.

@@ -36,6 +36,9 @@ abstract class AppPrefs with _$AppPrefs {
 
     /// Privacy: remote images in HTML emails load only on demand.
     @Default(true) bool blockRemoteImages,
+
+    /// Undo window before an email is actually sent (0 = immediate).
+    @Default(10) int undoSendSeconds,
     @Default(0) int updatedAt,
   }) = _AppPrefs;
 

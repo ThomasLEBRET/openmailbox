@@ -11,6 +11,7 @@ import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
 import '../providers/inbox_watcher.dart';
 import '../providers/prefs_provider.dart';
+import '../providers/undo_provider.dart';
 import '../theme.dart';
 import '../widgets/email_list_tile.dart';
 import '../widgets/email_reader.dart';
@@ -19,20 +20,51 @@ import 'appearance_dialog.dart';
 import 'compose_screen.dart';
 import 'setup_screen.dart';
 
-/// Runs [doSend] after a 10-second undo window surfaced as a SnackBar.
+/// Runs [doSend] after the configurable undo window ([delaySeconds],
+/// 0 = immediately). The SnackBar disappears the moment the send fires.
 void scheduleSend(
   ScaffoldMessengerState messenger,
   Future<void> Function() doSend, {
+  int delaySeconds = 10,
   VoidCallback? onSent,
 }) {
+  Future<void> run() async {
+    try {
+      await doSend();
+      onSent?.call();
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(
+          content: Text('Message envoyé'),
+          behavior: SnackBarBehavior.floating,
+          width: 420,
+          duration: Duration(seconds: 2),
+        ));
+    } catch (e) {
+      messenger
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+          content: Text('Échec de l\'envoi : $e'),
+          behavior: SnackBarBehavior.floating,
+          width: 420,
+          duration: const Duration(seconds: 6),
+        ));
+    }
+  }
+
+  if (delaySeconds <= 0) {
+    run();
+    return;
+  }
+
   var cancelled = false;
   messenger
     ..clearSnackBars()
     ..showSnackBar(SnackBar(
-      content: const Text('Message envoyé — 10 s pour annuler'),
+      content: Text('Envoi dans $delaySeconds s…'),
       behavior: SnackBarBehavior.floating,
       width: 420,
-      duration: const Duration(seconds: 10),
+      duration: Duration(seconds: delaySeconds),
       action: SnackBarAction(
         label: 'Annuler',
         onPressed: () {
@@ -43,23 +75,15 @@ void scheduleSend(
               content: Text('Envoi annulé'),
               behavior: SnackBarBehavior.floating,
               width: 420,
+              duration: Duration(seconds: 2),
             ));
         },
       ),
     ));
-  Timer(const Duration(seconds: 10), () async {
+  Timer(Duration(seconds: delaySeconds), () {
     if (cancelled) return;
-    try {
-      await doSend();
-      onSent?.call();
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(
-        content: Text('Échec de l\'envoi : $e'),
-        behavior: SnackBarBehavior.floating,
-        width: 420,
-        duration: const Duration(seconds: 6),
-      ));
-    }
+    messenger.hideCurrentSnackBar();
+    run();
   });
 }
 
@@ -256,10 +280,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         if (!_isTyping) action();
       };
 
+  Future<void> _undoLast() async {
+    final label = await ref.read(undoProvider.notifier).undoLast();
+    _notify(label == null ? 'Rien à annuler' : 'Annulé : $label');
+  }
+
   /// Reader shortcuts (toolbar hints: R, F, U, ⌫; J/K to navigate).
   Map<ShortcutActivator, VoidCallback> get _shortcuts {
     final selected = _selected;
     return {
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
+          _guarded(_undoLast),
+      const SingleActivator(LogicalKeyboardKey.keyZ, control: true):
+          _guarded(_undoLast),
       const SingleActivator(LogicalKeyboardKey.keyJ):
           _guarded(() => _openSibling(1)),
       const SingleActivator(LogicalKeyboardKey.keyK):
@@ -343,6 +376,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       scheduleSend(
         ScaffoldMessenger.of(context),
         result,
+        delaySeconds:
+            ref.read(prefsProvider).value?.undoSendSeconds ?? 10,
         onSent: () {
           if (mounted) {
             ref.read(folderListProvider.notifier).refresh();
@@ -589,7 +624,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
       return Scaffold(
         body: CallbackShortcuts(
-          bindings: _shortcuts,
+          bindings: _searchOpen
+              ? {
+                  const SingleActivator(LogicalKeyboardKey.escape):
+                      _clearSearch,
+                }
+              : _shortcuts,
           child: Focus(
             autofocus: true,
             child: Row(
@@ -921,7 +961,9 @@ class _ReaderScreenState extends ConsumerState<_ReaderScreen> {
       ),
     );
     if (result is Future<void> Function()) {
-      scheduleSend(messenger, result);
+      scheduleSend(messenger, result,
+          delaySeconds:
+              ref.read(prefsProvider).value?.undoSendSeconds ?? 10);
     }
   }
 
