@@ -1,41 +1,66 @@
 # OpenMailbox
 
-Client email cross-platform (macOS + Android) en Flutter/Dart, compatible avec n'importe quel service email via IMAP/SMTP (Gmail, Outlook, ProtonMail, etc.).
+<p align="center">
+  <img src="assets/icon/app_icon.png" width="128" alt="OpenMailbox">
+</p>
 
-## Scope MVP
+Client email cross-platform (macOS + Android) en Flutter/Dart, compatible avec n'importe quel service email via IMAP/SMTP (Mailo, Gmail, Outlook, etc.). Interface moderne inspirée de ProtonMail.
 
-Une seule boîte email, pas de multi-account, focus sur sync IMAP et composition/lecture.
+## Fonctionnalités
+
+**Comptes**
+- Multi-comptes IMAP/SMTP avec switcher, credentials chiffrés (Keychain/Keystore)
+- Signature par compte, test de connexion intégré
+
+**Lecture**
+- Rendu HTML fidèle (WebView native, JavaScript désactivé)
+- Images distantes bloquées par défaut (anti-tracking), chargement à la demande
+- Liens cliquables, corps de mails mis en cache (réouverture instantanée)
+
+**Tri & navigation**
+- Liste en cartes flottantes, recherche locale instantanée + recherche serveur (IMAP SEARCH)
+- Raccourcis clavier : `J`/`K` naviguer, `R` répondre, `F` transférer, `U` lu/non-lu, `⌫` supprimer, `⌘Z` annuler
+- Drag & drop des mails vers les dossiers, sélection multiple avec actions groupées
+- Étoiles (\Flagged), compteurs par dossier (total + non lus), suppression = corbeille avec annulation
+
+**Écriture**
+- Pièces jointes multiples (10 Mo max), Cc/Cci repliables
+- Réponses avec citation du message d'origine
+- Envoi différé annulable (délai configurable 0–30 s)
+
+**Confort**
+- Notifications natives + badge de nouveaux messages
+- Panneaux redimensionnables, volet de lecture masquable (lecture plein écran)
+- Personnalisation synchronisée entre appareils via IMAP : thème clair/sombre/système, 6 couleurs d'accent, densité, police, taille de texte
 
 ## Stack
 
-- **UI:** Flutter
-- **IMAP/SMTP:** [enough_mail](https://github.com/enough-software/enough_mail)
-- **State management:** Riverpod
-- **Stockage local:** Isar
-- **Credentials:** flutter_secure_storage
+- **UI :** Flutter (Material 3) · **State :** Riverpod
+- **IMAP/SMTP :** [enough_mail](https://github.com/enough-software/enough_mail)
+- **Stockage local :** sqflite · **Credentials :** flutter_secure_storage
+- **HTML :** webview_flutter (WebKit)
 
-## Getting started
+## Développement
 
 ```bash
 flutter pub get
-flutter run -d macos    # ou -d <device-android>
+dart run build_runner build   # génération freezed/json
+flutter run -d macos          # ou -d <device-android>
 ```
 
-## Structure
+macOS nécessite Xcode complet (pas seulement les Command Line Tools) et une identité de signature de développement (Keychain).
+
+## Releases
+
+Un tag `vX.Y.Z` déclenche les builds GitHub Actions : APK Android et DMG macOS attachés à la release.
+
+## Architecture
 
 ```
 lib/
-├── models/       # Email, Folder, IMAPConfig/SMTPConfig
-├── providers/    # State management (Riverpod)
-├── services/     # imap_service, smtp_service, storage_service
-├── screens/      # setup_screen, home_screen, compose_screen
-└── widgets/      # email_list_tile, email_reader, folder_sidebar
+├── models/       # Email, Folder, MailAccount, AppPrefs (freezed)
+├── providers/    # Riverpod : comptes, emails, dossiers, prefs, undo, watcher
+├── services/     # imap_service, smtp_service, storage_service, notifications
+├── screens/      # home, setup (+ settings), compose, apparence
+└── widgets/      # sidebar, tuile email, lecteur
 ```
-
-## CI/CD
-
-Tag `vX.Y.Z` déclenche les builds Android (APK) et macOS (DMG) via GitHub Actions, avec release automatique.
-
-## Roadmap post-MVP
-
-Multi-account, recherche full-text, labels, sync incrémental + push, threading, drafts auto-save, pièces jointes, éditeur HTML, dark mode, signature macOS.
