@@ -305,14 +305,28 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     final movedUid = newUid;
     if (recordUndo && movedUid != null) {
       ref.read(undoProvider.notifier).push(undoLabel, () async {
-        await withImapSession(
-            ref, (imap) => imap.moveMessage(targetPath, movedUid, folder));
-        unawaited(shiftCounts(-1));
-        // Refresh whichever of the two folders is on screen.
+        // Optimistic restore — instant, no full re-sync. Update whichever
+        // folder is on screen, adjust counts, move back on the server in
+        // the background.
         final visible = ref.read(currentFolderProvider);
-        if (visible == folder || visible == targetPath) {
-          unawaited(sync());
+        if (visible == folder) {
+          final current = state.value ?? const <Email>[];
+          final restored = [
+            ...current.where((e) => e.uid != removed.uid),
+            removed,
+          ]..sort((a, b) => b.date.compareTo(a.date));
+          state = AsyncData(restored);
+          await storage.replaceFolderEmails(accountId, folder, restored);
+        } else if (visible == targetPath) {
+          final current = state.value ?? const <Email>[];
+          state = AsyncData(
+              current.where((e) => e.uid != movedUid).toList());
+          await storage.deleteEmail(accountId, targetPath, movedUid);
         }
+        unawaited(shiftCounts(-1));
+        unawaited(withImapSession(
+                ref, (imap) => imap.moveMessage(targetPath, movedUid, folder))
+            .catchError((_) => null));
       });
     }
   }

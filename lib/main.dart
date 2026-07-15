@@ -13,16 +13,31 @@ import 'screens/home_screen.dart';
 import 'screens/setup_screen.dart';
 import 'theme.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
-  await NotificationService.init();
-  // Periodic background new-mail check (Android; no-op elsewhere).
-  await initBackgroundMailCheck();
+  // Start the UI immediately. Notification/background setup must NEVER
+  // block or crash startup — a plugin failing to initialize used to keep
+  // the whole app from opening on Android.
   runApp(const ProviderScope(child: OpenMailboxApp()));
+  _initBackgroundServices();
+}
+
+Future<void> _initBackgroundServices() async {
+  try {
+    await NotificationService.init();
+  } catch (_) {
+    // Notifications optional.
+  }
+  try {
+    // Periodic background new-mail check (Android; no-op elsewhere).
+    await initBackgroundMailCheck();
+  } catch (_) {
+    // Background scheduling optional.
+  }
 }
 
 class OpenMailboxApp extends ConsumerWidget {
