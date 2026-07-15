@@ -73,6 +73,10 @@ abstract class AppPrefs with _$AppPrefs {
 
     /// Custom folder colors: IMAP path → ARGB value.
     @Default({}) Map<String, int> folderColors,
+
+    /// Mobile swipe actions on a list row ([SwipeAction] names).
+    @Default('read') String swipeRightAction,
+    @Default('delete') String swipeLeftAction,
     @Default(0) int updatedAt,
   }) = _AppPrefs;
 
@@ -86,6 +90,34 @@ abstract class AppPrefs with _$AppPrefs {
         'dark' => ThemeMode.dark,
         _ => ThemeMode.system,
       };
+
+  SwipeAction get swipeRight => SwipeAction.fromName(swipeRightAction);
+  SwipeAction get swipeLeft => SwipeAction.fromName(swipeLeftAction);
+}
+
+/// A configurable swipe gesture on a mobile email row.
+enum SwipeAction {
+  none('none', 'Aucune', Icons.block, Colors.grey),
+  read('read', 'Lu / Non lu', Icons.mark_email_read_outlined,
+      Color(0xFF2D7DD2)),
+  flag('flag', 'Étoile', Icons.star_rounded, Color(0xFFF2B01E)),
+  delete('delete', 'Supprimer', Icons.delete_outline_rounded,
+      Color(0xFFE05260)),
+  move('move', 'Déplacer', Icons.drive_file_move_outlined, Color(0xFF6D4AFF));
+
+  const SwipeAction(this.name, this.label, this.icon, this.color);
+
+  final String name;
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  /// True when performing the action removes the row from the list.
+  bool get isDestructive => this == delete || this == move;
+
+  static SwipeAction fromName(String name) =>
+      SwipeAction.values.firstWhere((a) => a.name == name,
+          orElse: () => SwipeAction.none);
 }
 
 /// The accent choices offered in the appearance dialog.

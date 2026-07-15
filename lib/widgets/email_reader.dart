@@ -41,14 +41,17 @@ class EmailReader extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final sender = email.from.isEmpty ? '?' : email.from;
+    // Phones: icon-only buttons, no keyboard-shortcut chips (meaningless
+    // on touch) and no truncation. Desktop keeps labelled buttons + hints.
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Sticky action toolbar (direction B): compact buttons with their
-        // keyboard shortcut, always at the same place.
+        // Sticky action toolbar.
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          padding: EdgeInsets.symmetric(
+              horizontal: isMobile ? 4 : 14, vertical: 6),
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLow,
             border: Border(
@@ -58,44 +61,52 @@ class EmailReader extends StatelessWidget {
             ),
           ),
           child: Row(
+            mainAxisAlignment: isMobile
+                ? MainAxisAlignment.spaceAround
+                : MainAxisAlignment.start,
             children: [
               _ToolbarButton(
                 icon: Icons.reply_rounded,
                 label: 'Répondre',
                 shortcut: 'R',
+                compact: isMobile,
                 onPressed: onReply,
               ),
-              const SizedBox(width: 6),
+              if (!isMobile) const SizedBox(width: 6),
               _ToolbarButton(
                 icon: Icons.forward_rounded,
                 label: 'Transférer',
                 shortcut: 'F',
+                compact: isMobile,
                 onPressed: onForward,
               ),
-              const SizedBox(width: 6),
+              if (!isMobile) const SizedBox(width: 6),
               _ToolbarButton(
                 icon: email.isRead
                     ? Icons.mark_email_unread_outlined
                     : Icons.mark_email_read_outlined,
                 label: email.isRead ? 'Non lu' : 'Lu',
                 shortcut: 'U',
+                compact: isMobile,
                 onPressed: onToggleRead,
               ),
               if (onLabel != null) ...[
-                const SizedBox(width: 6),
+                if (!isMobile) const SizedBox(width: 6),
                 _ToolbarButton(
                   icon: Icons.label_outline_rounded,
                   label: 'Étiqueter',
                   shortcut: 'L',
+                  compact: isMobile,
                   onPressed: onLabel!,
                 ),
               ],
-              const Spacer(),
+              if (!isMobile) const Spacer(),
               _ToolbarButton(
                 icon: Icons.delete_outline_rounded,
                 label: 'Supprimer',
                 shortcut: '⌫',
                 danger: true,
+                compact: isMobile,
                 onPressed: onDelete,
               ),
             ],
@@ -206,6 +217,7 @@ class _ToolbarButton extends StatelessWidget {
     required this.label,
     required this.shortcut,
     required this.onPressed,
+    this.compact = false,
     this.danger = false,
   });
 
@@ -213,12 +225,23 @@ class _ToolbarButton extends StatelessWidget {
   final String label;
   final String shortcut;
   final VoidCallback onPressed;
+  final bool compact;
   final bool danger;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = danger ? scheme.error : scheme.onSurfaceVariant;
+
+    // Mobile: a plain icon button with a tooltip — no label, no shortcut.
+    if (compact) {
+      return IconButton(
+        onPressed: onPressed,
+        tooltip: label,
+        icon: Icon(icon, size: 22, color: color),
+        visualDensity: VisualDensity.compact,
+      );
+    }
 
     return OutlinedButton(
       onPressed: onPressed,

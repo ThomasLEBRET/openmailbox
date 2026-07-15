@@ -49,6 +49,8 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
     bool? hideReader,
     bool? blockRemoteImages,
     int? undoSendSeconds,
+    String? swipeRightAction,
+    String? swipeLeftAction,
   }) async {
     final current = state.value ?? const AppPrefs();
     final next = current.copyWith(
@@ -65,6 +67,8 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
       hideReader: hideReader ?? current.hideReader,
       blockRemoteImages: blockRemoteImages ?? current.blockRemoteImages,
       undoSendSeconds: undoSendSeconds ?? current.undoSendSeconds,
+      swipeRightAction: swipeRightAction ?? current.swipeRightAction,
+      swipeLeftAction: swipeLeftAction ?? current.swipeLeftAction,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     state = AsyncData(next);

@@ -9,6 +9,7 @@ import '../models/prefs.dart';
 import '../providers/config_provider.dart';
 import '../providers/email_provider.dart';
 import '../providers/folder_provider.dart';
+import '../providers/badge_provider.dart';
 import '../providers/inbox_watcher.dart';
 import '../providers/prefs_provider.dart';
 import '../providers/undo_provider.dart';
@@ -156,8 +157,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     super.initState();
     Future.microtask(() {
       _refreshAll();
-      // Start the new-mail watcher (notifications + badge).
+      // Start the new-mail watcher and keep the icon badge in sync with
+      // the total unread across all folders.
       ref.read(inboxWatcherProvider);
+      ref.read(badgeUpdaterProvider);
     });
   }
 
@@ -286,6 +289,49 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       context: context,
       builder: (_) => LabelPickerDialog(email: email),
     );
+  }
+
+  /// Folder picker (mobile "move" action). Moving to the chosen folder is
+  /// optimistic and undoable via the provider.
+  Future<void> _moveToFolderSheet(Email email) async {
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final current = ref.read(currentFolderProvider);
+    final targets = folders.where((f) => f.path != current).toList();
+    if (targets.isEmpty) return;
+
+    final target = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('Déplacer vers…',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+            ),
+            for (final folder in targets)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(_folderLabel(folder.path)),
+                onTap: () => Navigator.of(context).pop(folder.path),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (target == null) return;
+    try {
+      await ref.read(emailListProvider.notifier).moveToFolder(
+            email.uid,
+            target,
+            undoLabel: 'Déplacement',
+          );
+      _notify('Déplacé — ⌘Z / annuler pour revenir');
+    } catch (e) {
+      _notify('Échec du déplacement : $e');
+    }
   }
 
   Future<void> _undoLast() async {
@@ -770,6 +816,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 onToggleFlag: () =>
                     ref.read(emailListProvider.notifier).toggleFlagged(email.uid),
                 onLabel: () => _openLabels(email),
+                onMove: () => _moveToFolderSheet(email),
               );
             },
           ),

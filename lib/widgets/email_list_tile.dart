@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/email.dart';
+import '../models/prefs.dart';
 import '../providers/prefs_provider.dart';
 import '../theme.dart';
 
-class EmailListTile extends StatefulWidget {
+class EmailListTile extends ConsumerStatefulWidget {
   const EmailListTile({
     super.key,
     required this.email,
@@ -17,6 +18,7 @@ class EmailListTile extends StatefulWidget {
     required this.onDelete,
     required this.onToggleFlag,
     this.onLabel,
+    this.onMove,
     this.selectionMode = false,
     this.checked = false,
     this.onCheckChanged,
@@ -32,6 +34,9 @@ class EmailListTile extends StatefulWidget {
   final VoidCallback onToggleFlag;
   final VoidCallback? onLabel;
 
+  /// Opens the folder picker (drag on desktop, swipe on mobile).
+  final VoidCallback? onMove;
+
   /// True when at least one email is checked: checkboxes stay visible
   /// and tapping toggles instead of opening.
   final bool selectionMode;
@@ -39,114 +44,155 @@ class EmailListTile extends StatefulWidget {
   final ValueChanged<bool>? onCheckChanged;
 
   @override
-  State<EmailListTile> createState() => _EmailListTileState();
+  ConsumerState<EmailListTile> createState() => _EmailListTileState();
 }
 
-class _EmailListTileState extends State<EmailListTile> {
+class _EmailListTileState extends ConsumerState<EmailListTile> {
   bool _hovered = false;
+
+  VoidCallback? _actionFor(SwipeAction action) => switch (action) {
+        SwipeAction.read => widget.onToggleRead,
+        SwipeAction.flag => widget.onToggleFlag,
+        SwipeAction.delete => widget.onDelete,
+        SwipeAction.move => widget.onMove,
+        SwipeAction.none => null,
+      };
+
+  Widget _swipeBackground(SwipeAction action, {required bool alignStart}) {
+    return Container(
+      color: action.color.withValues(alpha: 0.9),
+      alignment: alignStart ? Alignment.centerLeft : Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Icon(action.icon, color: Colors.white),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final email = widget.email;
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
+    final card = _card(context);
+
+    Widget wrapped;
+    if (isMobile && !widget.selectionMode) {
+      // Touch: swipe left/right for the two configured actions. No drag —
+      // long-press-to-move makes no sense on a phone.
+      final prefs = ref.watch(prefsProvider).value ?? const AppPrefs();
+      final right = prefs.swipeRight; // swipe →  (startToEnd)
+      final left = prefs.swipeLeft; //  swipe ←  (endToStart)
+      final rightCb = _actionFor(right);
+      final leftCb = _actionFor(left);
+
+      final direction = rightCb != null && leftCb != null
+          ? DismissDirection.horizontal
+          : rightCb != null
+              ? DismissDirection.startToEnd
+              : leftCb != null
+                  ? DismissDirection.endToStart
+                  : DismissDirection.none;
+
+      wrapped = Dismissible(
+        key: ValueKey('${email.folder}-${email.uid}'),
+        direction: direction,
+        background: rightCb != null
+            ? _swipeBackground(right, alignStart: true)
+            : null,
+        secondaryBackground:
+            leftCb != null ? _swipeBackground(left, alignStart: false) : null,
+        // Always return false: the action itself removes the row from the
+        // list when needed (delete/move) via the provider, so Dismissible
+        // never has to detach it — avoids "dismissed widget still in tree".
+        confirmDismiss: (dir) async {
+          (dir == DismissDirection.startToEnd ? rightCb : leftCb)?.call();
+          return false;
+        },
+        child: card,
+      );
+    } else if (!isMobile) {
+      // Desktop: drag onto a sidebar folder to move.
+      wrapped = Draggable<Email>(
+        data: email,
+        feedback: _dragFeedback(context),
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        childWhenDragging: Opacity(opacity: 0.35, child: _placeholder(context)),
+        child: card,
+      );
+    } else {
+      wrapped = card;
+    }
+
+    return Padding(
+      padding: EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: AppColors.compactOf(context) ? 3 : 5),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: wrapped,
+      ),
+    );
+  }
+
+  Widget _card(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final email = widget.email;
     final sender = email.from.isEmpty ? '?' : email.from;
     final initial = sender[0].toUpperCase();
     final unread = !email.isRead;
     final compact = AppColors.compactOf(context);
-
-    // Floating card (direction A): clearly detached from the background —
-    // border + shadow + gap — with a purple left edge for unread and an
-    // accent outline when selected.
     final accent = AppColors.accentOf(context);
 
-    final dragFeedback = Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: accent),
-          boxShadow: const [
-            BoxShadow(color: Colors.black38, blurRadius: 12),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.drive_file_move_outlined, size: 16, color: accent),
-            const SizedBox(width: 8),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 260),
-              child: Text(
-                email.subject,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, color: scheme.onSurface),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 3 : 5),
-      child: Draggable<Email>(
-        data: email,
-        feedback: dragFeedback,
-        dragAnchorStrategy: pointerDragAnchorStrategy,
-        childWhenDragging: Opacity(opacity: 0.35, child: _card(context)),
-        child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: Material(
-          color: widget.selected
-              ? scheme.primaryContainer.withValues(alpha: 0.35)
-              : _hovered
-              ? scheme.surfaceContainerHigh
-              : scheme.surfaceContainer,
-          elevation: _hovered || widget.selected ? 4 : 1.5,
-          shadowColor: Colors.black.withValues(alpha: 0.4),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(
-              color: widget.selected
-                  ? accent
-                  : scheme.outlineVariant.withValues(alpha: 0.45),
-            ),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Material(
+        color: widget.selected
+            ? scheme.primaryContainer.withValues(alpha: 0.35)
+            : _hovered
+                ? scheme.surfaceContainerHigh
+                : scheme.surfaceContainer,
+        elevation: _hovered || widget.selected ? 4 : 1.5,
+        shadowColor: Colors.black.withValues(alpha: 0.4),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: widget.selected
+                ? accent
+                : scheme.outlineVariant.withValues(alpha: 0.45),
           ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: widget.selectionMode
-                ? () => widget.onCheckChanged?.call(!widget.checked)
-                : widget.onTap,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border(
-                  left: BorderSide(
-                    color: unread ? accent : Colors.transparent,
-                    width: 3,
-                  ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: widget.selectionMode
+              ? () => widget.onCheckChanged?.call(!widget.checked)
+              : widget.onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border(
+                left: BorderSide(
+                  color: unread ? accent : Colors.transparent,
+                  width: 3,
                 ),
               ),
-              padding: EdgeInsets.symmetric(
-                  horizontal: 13, vertical: compact ? 6 : 11),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (widget.selectionMode || (_hovered && widget.onCheckChanged != null))
-                    SizedBox(
-                      width: 36,
-                      height: 36,
-                      child: Checkbox(
-                        value: widget.checked,
-                        onChanged: (value) =>
-                            widget.onCheckChanged?.call(value ?? false),
-                      ),
-                    )
-                  else
+            ),
+            padding:
+                EdgeInsets.symmetric(horizontal: 13, vertical: compact ? 6 : 11),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (widget.selectionMode ||
+                    (_hovered && widget.onCheckChanged != null))
+                  SizedBox(
+                    width: 36,
+                    height: 36,
+                    child: Checkbox(
+                      value: widget.checked,
+                      onChanged: (value) =>
+                          widget.onCheckChanged?.call(value ?? false),
+                    ),
+                  )
+                else
                   CircleAvatar(
                     radius: 18,
                     backgroundColor: AppColors.avatarColorFor(sender),
@@ -159,131 +205,154 @@ class _EmailListTileState extends State<EmailListTile> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                sender,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13.5,
-                                  fontWeight: unread
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                  color: scheme.onSurface,
-                                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              sender,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight:
+                                    unread ? FontWeight.w700 : FontWeight.w500,
+                                color: scheme.onSurface,
                               ),
-                            ),
-                            if (email.isFlagged && !_hovered) ...[
-                              const Icon(Icons.star_rounded,
-                                  size: 15, color: Color(0xFFF2B01E)),
-                              const SizedBox(width: 4),
-                            ],
-                            const SizedBox(width: 8),
-                            if (_hovered)
-                              _QuickActions(
-                                isRead: email.isRead,
-                                isFlagged: email.isFlagged,
-                                onReply: widget.onReply,
-                                onForward: widget.onForward,
-                                onToggleRead: widget.onToggleRead,
-                                onDelete: widget.onDelete,
-                                onToggleFlag: widget.onToggleFlag,
-                                onLabel: widget.onLabel,
-                              )
-                            else
-                              Text(
-                                formatEmailDate(email.date),
-                                style: TextStyle(
-                                  fontSize: 11.5,
-                                  color: unread
-                                      ? AppColors.accentOf(context)
-                                      : scheme.onSurfaceVariant,
-                                  fontWeight: unread
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                email.subject,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: unread
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                  color: scheme.onSurface,
-                                ),
-                              ),
-                            ),
-                            if (unread && !_hovered) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  color: AppColors.accentOf(context),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        if (!compact && email.preview.trim().isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            email.preview
-                                .replaceAll(RegExp(r'\s+'), ' ')
-                                .trim(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              color: scheme.onSurfaceVariant,
                             ),
                           ),
+                          if (email.isFlagged && !_hovered) ...[
+                            const Icon(Icons.star_rounded,
+                                size: 15, color: Color(0xFFF2B01E)),
+                            const SizedBox(width: 4),
+                          ],
+                          const SizedBox(width: 8),
+                          if (_hovered)
+                            _QuickActions(
+                              isRead: email.isRead,
+                              isFlagged: email.isFlagged,
+                              onReply: widget.onReply,
+                              onForward: widget.onForward,
+                              onToggleRead: widget.onToggleRead,
+                              onDelete: widget.onDelete,
+                              onToggleFlag: widget.onToggleFlag,
+                              onLabel: widget.onLabel,
+                            )
+                          else
+                            Text(
+                              formatEmailDate(email.date),
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: unread
+                                    ? accent
+                                    : scheme.onSurfaceVariant,
+                                fontWeight:
+                                    unread ? FontWeight.w600 : FontWeight.w400,
+                              ),
+                            ),
                         ],
-                        if (email.labels.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: _LabelChips(slugs: email.labels),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              email.subject,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight:
+                                    unread ? FontWeight.w600 : FontWeight.w400,
+                                color: scheme.onSurface,
+                              ),
+                            ),
                           ),
+                          if (unread && !_hovered) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: accent,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (!compact && email.preview.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          email.preview.replaceAll(RegExp(r'\s+'), ' ').trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
                       ],
-                    ),
+                      if (email.labels.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: _LabelChips(slugs: email.labels),
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-        ),
         ),
       ),
     );
   }
 
-  /// Static snapshot of the card used as childWhenDragging.
-  Widget _card(BuildContext context) {
+  Widget _dragFeedback(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final accent = AppColors.accentOf(context);
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: accent),
+          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 12)],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.drive_file_move_outlined, size: 16, color: accent),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 260),
+              child: Text(
+                widget.email.subject,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: scheme.onSurface),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
       color: scheme.surfaceContainer,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: scheme.outlineVariant.withValues(alpha: 0.45),
-        ),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.45)),
       ),
       child: SizedBox(
         height: 60,
@@ -292,8 +361,7 @@ class _EmailListTileState extends State<EmailListTile> {
             widget.email.subject,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 12.5, color: scheme.onSurfaceVariant),
+            style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
           ),
         ),
       ),
@@ -341,11 +409,7 @@ class _QuickActions extends StatelessWidget {
           onTap: onPressed,
           child: Padding(
             padding: const EdgeInsets.all(4),
-            child: Icon(
-              icon,
-              size: 17,
-              color: color ?? scheme.onSurfaceVariant,
-            ),
+            child: Icon(icon, size: 17, color: color ?? scheme.onSurfaceVariant),
           ),
         ),
       );
@@ -382,7 +446,6 @@ class _QuickActions extends StatelessWidget {
   }
 }
 
-
 /// Small colored chips resolving label slugs against the synced defs.
 class _LabelChips extends ConsumerWidget {
   const _LabelChips({required this.slugs});
@@ -405,13 +468,10 @@ class _LabelChips extends ConsumerWidget {
         for (final label in matched)
           Builder(builder: (context) {
             final base = Color(label.colorValue);
-            // Shift the text toward white (dark theme) or black (light
-            // theme) so mid-brightness hues like green stay readable.
             final text = Color.lerp(
                 base, dark ? Colors.white : Colors.black, dark ? 0.45 : 0.4)!;
             return Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
               decoration: BoxDecoration(
                 color: base.withValues(alpha: dark ? 0.28 : 0.14),
                 borderRadius: BorderRadius.circular(8),

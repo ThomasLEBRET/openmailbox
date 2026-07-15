@@ -97,6 +97,20 @@ class StorageService {
     return state;
   }
 
+  // --- Background worker state ----------------------------------------------
+
+  /// Total unread seen at the last background check, to detect growth.
+  Future<int> readLastUnread() async {
+    final file = await _fileIn('last_unread.txt');
+    if (!file.existsSync()) return -1;
+    return int.tryParse(await file.readAsString()) ?? -1;
+  }
+
+  Future<void> writeLastUnread(int total) async {
+    final file = await _fileIn('last_unread.txt');
+    await file.writeAsString('$total');
+  }
+
   // --- UI preferences (non-secret) ------------------------------------------
 
   Future<void> savePrefs(AppPrefs prefs) async {

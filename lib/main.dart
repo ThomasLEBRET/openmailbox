@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'models/prefs.dart';
 import 'providers/config_provider.dart';
 import 'providers/prefs_provider.dart';
+import 'services/background_worker.dart';
 import 'services/notification_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/setup_screen.dart';
@@ -19,6 +20,8 @@ void main() async {
     databaseFactory = databaseFactoryFfi;
   }
   await NotificationService.init();
+  // Periodic background new-mail check (Android; no-op elsewhere).
+  await initBackgroundMailCheck();
   runApp(const ProviderScope(child: OpenMailboxApp()));
 }
 

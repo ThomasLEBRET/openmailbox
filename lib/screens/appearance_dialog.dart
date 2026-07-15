@@ -187,9 +187,68 @@ class AppearanceDialog extends ConsumerWidget {
                 onSelectionChanged: (selection) =>
                     notifier.apply(undoSendSeconds: selection.first),
               ),
+              const SizedBox(height: 16),
+              _label(context, 'Gestes de balayage (mobile)'),
+              const SizedBox(height: 8),
+              _swipeRow(
+                context,
+                icon: Icons.swipe_right_alt_rounded,
+                title: 'Balayer vers la droite',
+                current: prefs.swipeRight,
+                onChanged: (a) => notifier.apply(swipeRightAction: a.name),
+              ),
+              _swipeRow(
+                context,
+                icon: Icons.swipe_left_alt_rounded,
+                title: 'Balayer vers la gauche',
+                current: prefs.swipeLeft,
+                onChanged: (a) => notifier.apply(swipeLeftAction: a.name),
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _swipeRow(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required SwipeAction current,
+    required ValueChanged<SwipeAction> onChanged,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(child: Text(title, style: const TextStyle(fontSize: 13.5))),
+          DropdownButton<SwipeAction>(
+            value: current,
+            underline: const SizedBox.shrink(),
+            borderRadius: BorderRadius.circular(10),
+            items: [
+              for (final action in SwipeAction.values)
+                DropdownMenuItem(
+                  value: action,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(action.icon, size: 16, color: action.color),
+                      const SizedBox(width: 8),
+                      Text(action.label, style: const TextStyle(fontSize: 13)),
+                    ],
+                  ),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) onChanged(value);
+            },
+          ),
+        ],
       ),
     );
   }
