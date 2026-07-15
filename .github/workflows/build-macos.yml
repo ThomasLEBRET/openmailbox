@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -22,6 +24,6 @@ jobs:
         run: |
           cd build/macos/Build/Products/Release
           hdiutil create -volname "OpenMailbox" -srcfolder . -ov -format UDZO OpenMailbox.dmg
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v2
         with:
           files: build/macos/Build/Products/Release/OpenMailbox.dmg
