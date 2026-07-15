@@ -1,9 +1,10 @@
 name: Build macOS DMG
 
+# Manual only: a distributable macOS build needs an Apple Developer
+# signing identity, which isn't available on CI. Build the DMG locally
+# (the local signed build works) until code-signing secrets are set up.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.13.0'
+          flutter-version: '3.44.6'
           channel: 'stable'
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
