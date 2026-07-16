@@ -56,15 +56,41 @@ class NotificationService {
     }
   }
 
-  static Future<void> notifyNewMail(int newCount, int unreadTotal) async {
+  /// Shows the new-mail alert. When [sender]/[subject] are known the
+  /// notification reads like a real mail app ("Jean Dupont — Facture"); the
+  /// [folderLabel] appears as sub-text. Content is marked private so a
+  /// secure lockscreen hides it behind the system placeholder, but shows in
+  /// full once unlocked.
+  static Future<void> notifyNewMail(
+    int newCount,
+    int unreadTotal, {
+    String? sender,
+    String? subject,
+    String? folderLabel,
+  }) async {
     if (!_ready) return;
+    final hasDetail = sender != null && sender.isNotEmpty;
+    final cleanSubject =
+        (subject == null || subject.isEmpty) ? '(sans sujet)' : subject;
+    final String title;
+    final String body;
+    if (hasDetail) {
+      if (newCount <= 1) {
+        title = sender;
+        body = cleanSubject;
+      } else {
+        title = '$newCount nouveaux messages';
+        body = '$sender — $cleanSubject';
+      }
+    } else {
+      title = 'OpenMailbox';
+      body = newCount <= 1 ? 'Nouveau message' : '$newCount nouveaux messages';
+    }
     try {
       await _plugin.show(
         id: 1,
-        title: 'OpenMailbox',
-        body: newCount == 1
-            ? 'Nouveau message dans votre boîte de réception'
-            : '$newCount nouveaux messages dans votre boîte de réception',
+        title: title,
+        body: body,
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(badgeNumber: unreadTotal),
           android: AndroidNotificationDetails(
@@ -73,6 +99,12 @@ class NotificationService {
             importance: Importance.high,
             // Badge count on launchers that support it.
             number: unreadTotal,
+            subText: folderLabel,
+            // Full content when unlocked; hidden on a secure lockscreen.
+            visibility: NotificationVisibility.private,
+            styleInformation: hasDetail
+                ? BigTextStyleInformation(body, contentTitle: title)
+                : null,
           ),
         ),
       );

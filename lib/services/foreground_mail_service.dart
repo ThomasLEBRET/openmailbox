@@ -125,14 +125,22 @@ class _MailWatcherHandler extends TaskHandler {
       };
       final baseline = await _storage.readFolderUnread();
 
-      // Sum the growth across folders we've already seen. A folder absent
+      // Sum the growth across folders we've already seen, tracking the
+      // folder that grew most (for the notification detail). A folder absent
       // from the baseline (first run, or newly created) is recorded but
       // never notified, so we don't announce the whole mailbox at once.
       var newCount = 0;
+      String? grownPath;
+      var bestDelta = 0;
       for (final entry in current.entries) {
         final previous = baseline[entry.key];
         if (previous != null && entry.value > previous) {
-          newCount += entry.value - previous;
+          final delta = entry.value - previous;
+          newCount += delta;
+          if (delta > bestDelta) {
+            bestDelta = delta;
+            grownPath = entry.key;
+          }
         }
       }
       final totalUnread =
@@ -140,7 +148,29 @@ class _MailWatcherHandler extends TaskHandler {
 
       await _storage.writeFolderUnread(current);
       if (newCount > 0) {
-        await NotificationService.notifyNewMail(newCount, totalUnread);
+        String? sender;
+        String? subject;
+        String? folderLabel;
+        // Fetch the newest message of the folder that grew, for a rich
+        // "sender — subject" notification. One extra round trip, only when
+        // there's actually new mail.
+        if (grownPath != null) {
+          try {
+            final path = grownPath;
+            final recent = await _imap
+                .runExclusive(() => _imap.fetchRecentMessages(path, count: 1));
+            if (recent.isNotEmpty) {
+              final latest = recent.last;
+              sender = latest.from.isNotEmpty ? latest.from : latest.fromEmail;
+              subject = latest.subject;
+              folderLabel = _folderLabel(path);
+            }
+          } catch (_) {
+            // Detail is a bonus — notify with the count regardless.
+          }
+        }
+        await NotificationService.notifyNewMail(newCount, totalUnread,
+            sender: sender, subject: subject, folderLabel: folderLabel);
       }
     } catch (_) {
       // Network hiccup or dead session: drop the connection so the next
@@ -150,6 +180,10 @@ class _MailWatcherHandler extends TaskHandler {
       _scanning = false;
     }
   }
+
+  String _folderLabel(String path) => path.toLowerCase() == 'inbox'
+      ? 'Boîte de réception'
+      : path.split('/').last;
 
   /// Coarse heartbeat: if our Timer somehow died (isolate frozen/resumed),
   /// bring it back.
