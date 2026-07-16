@@ -8,6 +8,12 @@ class NotificationService {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
 
+  // Single channel for new-mail alerts. Created explicitly at init() so it
+  // shows up in Android's per-app notification settings right away (Android
+  // 8+ hides an app from settings until at least one channel exists).
+  static const _channelId = 'new_mail';
+  static const _channelName = 'Nouveaux messages';
+
   static Future<void> init() async {
     if (_ready) return;
     const settings = InitializationSettings(
@@ -23,10 +29,18 @@ class NotificationService {
       // Android 13+ needs an explicit runtime request for POST_NOTIFICATIONS
       // (Darwin permissions are asked via the init settings above).
       if (Platform.isAndroid) {
-        await _plugin
-            .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>()
-            ?.requestNotificationsPermission();
+        final android = _plugin.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        await android?.requestNotificationsPermission();
+        // Pre-create the channel (idempotent) rather than relying on it being
+        // created lazily on the first notification.
+        await android?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            _channelId,
+            _channelName,
+            importance: Importance.high,
+          ),
+        );
       }
       _ready = true;
     } catch (_) {
@@ -47,9 +61,9 @@ class NotificationService {
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(badgeNumber: unreadTotal),
           android: AndroidNotificationDetails(
-            'new_mail',
-            'Nouveaux messages',
-            importance: Importance.defaultImportance,
+            _channelId,
+            _channelName,
+            importance: Importance.high,
             // Badge count on launchers that support it.
             number: unreadTotal,
           ),
