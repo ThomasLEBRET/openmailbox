@@ -227,19 +227,19 @@ class FolderSidebar extends ConsumerWidget {
               ),
             ListTile(
               dense: true,
-              leading: Icon(Icons.palette_outlined, color: side.text, size: 20),
+              leading: Icon(Icons.tune_rounded, color: side.text, size: 20),
               title: Text(
-                'Apparence',
+                'Préférences',
                 style: TextStyle(color: side.text, fontSize: 14),
               ),
               onTap: onOpenAppearance,
             ),
             ListTile(
               dense: true,
-              leading:
-                  Icon(Icons.settings_outlined, color: side.text, size: 20),
+              leading: Icon(Icons.manage_accounts_outlined,
+                  color: side.text, size: 20),
               title: Text(
-                'Paramètres',
+                'Compte',
                 style: TextStyle(color: side.text, fontSize: 14),
               ),
               onTap: onOpenSettings,

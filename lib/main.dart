@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'app_messenger.dart';
 import 'models/prefs.dart';
 import 'providers/config_provider.dart';
 import 'providers/prefs_provider.dart';
@@ -53,6 +54,7 @@ class OpenMailboxApp extends ConsumerWidget {
     final prefs = ref.watch(prefsProvider).value ?? const AppPrefs();
     return MaterialApp(
       title: 'OpenMailbox',
+      scaffoldMessengerKey: rootMessengerKey,
       themeMode: prefs.materialThemeMode,
       theme: buildTheme(Brightness.light,
           accent: prefs.accent,

@@ -737,10 +737,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       },
       onOpenAppearance: () {
         if (!isDesktop) Navigator.of(context).maybePop();
-        showDialog<void>(
-          context: context,
-          builder: (_) => const AppearanceDialog(),
-        );
+        if (isDesktop) {
+          showDialog<void>(
+            context: context,
+            builder: (_) => const SettingsScreen(),
+          );
+        } else {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          );
+        }
       },
       onFolderSelected: isDesktop
           ? null

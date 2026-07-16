@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app_messenger.dart';
 import '../models/email.dart';
 import 'config_provider.dart';
 import 'folder_provider.dart';
@@ -279,56 +280,60 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
       );
     }
 
-    // Optimistic local removal.
+    // Optimistic local removal — instant. The server MOVE runs in the
+    // background so the UI (and any open reader) never waits on the network.
     state = AsyncData(
         emails.where((email) => email.uid != uid).toList(growable: false));
     await storage.deleteEmail(accountId, folder, uid);
     unawaited(shiftCounts(1));
 
-    final int? newUid;
-    try {
-      newUid = await withImapSession(
-          ref, (imap) => imap.moveMessage(folder, uid, targetPath));
-    } catch (_) {
-      // Roll back: restore the email and the counts.
-      final current = state.value ?? const <Email>[];
-      final restored = [...current, removed]
-        ..sort((a, b) => b.date.compareTo(a.date));
-      if (ref.read(currentFolderProvider) == folder) {
-        state = AsyncData(restored);
-      }
-      await storage.replaceFolderEmails(accountId, folder, restored);
-      unawaited(shiftCounts(-1));
-      rethrow;
-    }
-
-    final movedUid = newUid;
-    if (recordUndo && movedUid != null) {
-      ref.read(undoProvider.notifier).push(undoLabel, () async {
-        // Optimistic restore — instant, no full re-sync. Update whichever
-        // folder is on screen, adjust counts, move back on the server in
-        // the background.
-        final visible = ref.read(currentFolderProvider);
-        if (visible == folder) {
-          final current = state.value ?? const <Email>[];
-          final restored = [
-            ...current.where((e) => e.uid != removed.uid),
-            removed,
-          ]..sort((a, b) => b.date.compareTo(a.date));
+    unawaited(() async {
+      final int? newUid;
+      try {
+        newUid = await withImapSession(
+            ref, (imap) => imap.moveMessage(folder, uid, targetPath));
+      } catch (_) {
+        // Roll back: restore the email and the counts, tell the user.
+        final current = state.value ?? const <Email>[];
+        final restored = [...current, removed]
+          ..sort((a, b) => b.date.compareTo(a.date));
+        if (ref.read(currentFolderProvider) == folder) {
           state = AsyncData(restored);
-          await storage.replaceFolderEmails(accountId, folder, restored);
-        } else if (visible == targetPath) {
-          final current = state.value ?? const <Email>[];
-          state = AsyncData(
-              current.where((e) => e.uid != movedUid).toList());
-          await storage.deleteEmail(accountId, targetPath, movedUid);
         }
+        await storage.replaceFolderEmails(accountId, folder, restored);
         unawaited(shiftCounts(-1));
-        unawaited(withImapSession(
-                ref, (imap) => imap.moveMessage(targetPath, movedUid, folder))
-            .catchError((_) => null));
-      });
-    }
+        showRootSnackBar('Échec du déplacement — email restauré');
+        return;
+      }
+
+      final movedUid = newUid;
+      if (recordUndo && movedUid != null) {
+        ref.read(undoProvider.notifier).push(undoLabel, () async {
+          // Optimistic restore — instant, no full re-sync. Update whichever
+          // folder is on screen, adjust counts, move back on the server in
+          // the background.
+          final visible = ref.read(currentFolderProvider);
+          if (visible == folder) {
+            final current = state.value ?? const <Email>[];
+            final restored = [
+              ...current.where((e) => e.uid != removed.uid),
+              removed,
+            ]..sort((a, b) => b.date.compareTo(a.date));
+            state = AsyncData(restored);
+            await storage.replaceFolderEmails(accountId, folder, restored);
+          } else if (visible == targetPath) {
+            final current = state.value ?? const <Email>[];
+            state = AsyncData(
+                current.where((e) => e.uid != movedUid).toList());
+            await storage.deleteEmail(accountId, targetPath, movedUid);
+          }
+          unawaited(shiftCounts(-1));
+          unawaited(withImapSession(
+                  ref, (imap) => imap.moveMessage(targetPath, movedUid, folder))
+              .catchError((_) => null));
+        });
+      }
+    }());
   }
 
   /// Moves the email to the trash folder (or deletes permanently when
@@ -362,21 +367,23 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
       unreadDelta: wasUnread ? -1 : 0,
     ));
 
-    try {
-      await withImapSession(ref, (imap) => imap.deleteMessage(folder, uid));
-    } catch (_) {
-      final current = state.value ?? const <Email>[];
-      final restored = [...current, removed]
-        ..sort((a, b) => b.date.compareTo(a.date));
-      state = AsyncData(restored);
-      await storage.replaceFolderEmails(accountId, folder, restored);
-      unawaited(folderNotifier.adjustCounts(
-        folder,
-        totalDelta: 1,
-        unreadDelta: wasUnread ? 1 : 0,
-      ));
-      rethrow;
-    }
+    unawaited(() async {
+      try {
+        await withImapSession(ref, (imap) => imap.deleteMessage(folder, uid));
+      } catch (_) {
+        final current = state.value ?? const <Email>[];
+        final restored = [...current, removed]
+          ..sort((a, b) => b.date.compareTo(a.date));
+        state = AsyncData(restored);
+        await storage.replaceFolderEmails(accountId, folder, restored);
+        unawaited(folderNotifier.adjustCounts(
+          folder,
+          totalDelta: 1,
+          unreadDelta: wasUnread ? 1 : 0,
+        ));
+        showRootSnackBar('Échec de la suppression — email restauré');
+      }
+    }());
     return false;
   }
 
@@ -414,20 +421,22 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     }
     unawaited(shift(1));
 
-    try {
-      await withImapSession(
-          ref, (imap) => imap.moveMessages(folder, uids, targetPath));
-    } catch (_) {
-      final current = state.value ?? const <Email>[];
-      final restored = [...current, ...removed]
-        ..sort((a, b) => b.date.compareTo(a.date));
-      if (ref.read(currentFolderProvider) == folder) {
-        state = AsyncData(restored);
+    unawaited(() async {
+      try {
+        await withImapSession(
+            ref, (imap) => imap.moveMessages(folder, uids, targetPath));
+      } catch (_) {
+        final current = state.value ?? const <Email>[];
+        final restored = [...current, ...removed]
+          ..sort((a, b) => b.date.compareTo(a.date));
+        if (ref.read(currentFolderProvider) == folder) {
+          state = AsyncData(restored);
+        }
+        await storage.replaceFolderEmails(accountId, folder, restored);
+        unawaited(shift(-1));
+        showRootSnackBar('Échec du déplacement — emails restaurés');
       }
-      await storage.replaceFolderEmails(accountId, folder, restored);
-      unawaited(shift(-1));
-      rethrow;
-    }
+    }());
   }
 
   /// Deletes several messages: to trash in batch, or permanently when the
@@ -459,18 +468,20 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     unawaited(folderNotifier.adjustCounts(folder,
         totalDelta: -removed.length, unreadDelta: -unreadCount));
 
-    try {
-      await withImapSession(ref, (imap) => imap.deleteMessages(folder, uids));
-    } catch (_) {
-      final current = state.value ?? const <Email>[];
-      final restored = [...current, ...removed]
-        ..sort((a, b) => b.date.compareTo(a.date));
-      state = AsyncData(restored);
-      await storage.replaceFolderEmails(accountId, folder, restored);
-      unawaited(folderNotifier.adjustCounts(folder,
-          totalDelta: removed.length, unreadDelta: unreadCount));
-      rethrow;
-    }
+    unawaited(() async {
+      try {
+        await withImapSession(ref, (imap) => imap.deleteMessages(folder, uids));
+      } catch (_) {
+        final current = state.value ?? const <Email>[];
+        final restored = [...current, ...removed]
+          ..sort((a, b) => b.date.compareTo(a.date));
+        state = AsyncData(restored);
+        await storage.replaceFolderEmails(accountId, folder, restored);
+        unawaited(folderNotifier.adjustCounts(folder,
+            totalDelta: removed.length, unreadDelta: unreadCount));
+        showRootSnackBar('Échec de la suppression — emails restaurés');
+      }
+    }());
   }
 
   /// Empties the trash folder permanently. Returns how many were removed.
