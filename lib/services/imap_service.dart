@@ -447,6 +447,80 @@ class ImapService {
   Future<int?> moveToTrash(String folderPath, int uid, String trashPath) =>
       moveMessage(folderPath, uid, trashPath);
 
+  // --- Batch operations ------------------------------------------------------
+  // One IMAP round trip for the whole set instead of one per message — what
+  // made multi-select delete/move take N × the latency.
+
+  /// Moves several messages of [folderPath] to [targetPath] in a single
+  /// command (MOVE, COPY+DELETE fallback).
+  Future<void> moveMessages(
+      String folderPath, List<int> uids, String targetPath) async {
+    if (uids.isEmpty) return;
+    final client = _requireClient;
+    await _select(folderPath);
+    final sequence = MessageSequence.fromIds(uids, isUid: true);
+    try {
+      await client.uidMove(sequence, targetMailboxPath: targetPath);
+    } on ImapException {
+      await client.uidCopy(sequence, targetMailboxPath: targetPath);
+      await client.uidStore(sequence, [r'\Deleted'],
+          action: StoreAction.add, silent: true);
+      await client.expunge();
+    }
+  }
+
+  /// Permanently deletes several messages of [folderPath] (one expunge).
+  Future<void> deleteMessages(String folderPath, List<int> uids) async {
+    if (uids.isEmpty) return;
+    final client = _requireClient;
+    await _select(folderPath);
+    final sequence = MessageSequence.fromIds(uids, isUid: true);
+    await client.uidStore(sequence, [r'\Deleted'],
+        action: StoreAction.add, silent: true);
+    await client.expunge();
+  }
+
+  /// Empties [folderPath] entirely (used for "empty trash"). Returns how
+  /// many messages were removed.
+  Future<int> emptyFolder(String folderPath) async {
+    final client = _requireClient;
+    final box = await _select(folderPath, forceRefresh: true);
+    final count = box.messagesExists;
+    if (count == 0) return 0;
+    final sequence = MessageSequence.fromRange(1, count);
+    await client.store(sequence, [r'\Deleted'],
+        action: StoreAction.add, silent: true);
+    await client.expunge();
+    return count;
+  }
+
+  /// Deletes messages of [folderPath] delivered strictly before [before]
+  /// (IMAP SEARCH BEFORE). Used for auto-emptying the trash by age. Returns
+  /// how many were removed.
+  Future<int> deleteOlderThan(String folderPath, DateTime before) async {
+    final client = _requireClient;
+    await _select(folderPath, forceRefresh: true);
+    final result = await client.uidSearchMessages(
+        searchCriteria: 'BEFORE ${_imapDate(before)}');
+    final ids = result.matchingSequence?.toList() ?? const [];
+    if (ids.isEmpty) return 0;
+    final sequence = MessageSequence.fromIds(ids, isUid: true);
+    await client.uidStore(sequence, [r'\Deleted'],
+        action: StoreAction.add, silent: true);
+    await client.expunge();
+    return ids.length;
+  }
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  /// IMAP date literal, e.g. `01-Jan-2024` (RFC 3501 date, English months).
+  static String _imapDate(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}-'
+      '${_months[date.month - 1]}-${date.year}';
+
   /// Server-side search (IMAP SEARCH TEXT) in [folderPath]; returns the
   /// most recent [limit] matches as envelope metadata.
   Future<List<Email>> searchMessages(

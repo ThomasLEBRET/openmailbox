@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'email.dart';
+
 part 'prefs.freezed.dart';
 part 'prefs.g.dart';
 
@@ -82,6 +84,13 @@ abstract class AppPrefs with _$AppPrefs {
     /// connection so new mail notifies near-instantly (app closed), at the
     /// cost of a persistent notification. Off = periodic 15-min check only.
     @Default(false) bool instantNotifications,
+
+    /// Email list sort order ([SortMode] names).
+    @Default('dateDesc') String sortMode,
+
+    /// Auto-empty the trash of messages older than this many days
+    /// (0 = never).
+    @Default(0) int autoEmptyTrashDays,
     @Default(0) int updatedAt,
   }) = _AppPrefs;
 
@@ -98,6 +107,49 @@ abstract class AppPrefs with _$AppPrefs {
 
   SwipeAction get swipeRight => SwipeAction.fromName(swipeRightAction);
   SwipeAction get swipeLeft => SwipeAction.fromName(swipeLeftAction);
+  SortMode get sort => SortMode.fromName(sortMode);
+}
+
+/// Sort order for the email list. All are applied locally on the cached
+/// list, so they're free (no extra server round trip).
+enum SortMode {
+  dateDesc('dateDesc', 'Plus récents d\'abord', Icons.arrow_downward_rounded),
+  dateAsc('dateAsc', 'Plus anciens d\'abord', Icons.arrow_upward_rounded),
+  unreadFirst('unreadFirst', 'Non lus d\'abord', Icons.mark_email_unread_outlined),
+  sender('sender', 'Expéditeur (A→Z)', Icons.person_outline_rounded);
+
+  const SortMode(this.name, this.label, this.icon);
+
+  final String name;
+  final String label;
+  final IconData icon;
+
+  /// Orders [emails] a new list according to this mode. Date descending is
+  /// the tiebreaker so groups stay chronological.
+  List<Email> apply(List<Email> emails) {
+    final sorted = [...emails];
+    switch (this) {
+      case SortMode.dateDesc:
+        sorted.sort((a, b) => b.date.compareTo(a.date));
+      case SortMode.dateAsc:
+        sorted.sort((a, b) => a.date.compareTo(b.date));
+      case SortMode.unreadFirst:
+        sorted.sort((a, b) {
+          if (a.isRead != b.isRead) return a.isRead ? 1 : -1;
+          return b.date.compareTo(a.date);
+        });
+      case SortMode.sender:
+        sorted.sort((a, b) {
+          final byName =
+              a.from.toLowerCase().compareTo(b.from.toLowerCase());
+          return byName != 0 ? byName : b.date.compareTo(a.date);
+        });
+    }
+    return sorted;
+  }
+
+  static SortMode fromName(String name) => SortMode.values
+      .firstWhere((s) => s.name == name, orElse: () => SortMode.dateDesc);
 }
 
 /// A configurable swipe gesture on a mobile email row.

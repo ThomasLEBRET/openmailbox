@@ -52,6 +52,8 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
     String? swipeRightAction,
     String? swipeLeftAction,
     bool? instantNotifications,
+    String? sortMode,
+    int? autoEmptyTrashDays,
   }) async {
     final current = state.value ?? const AppPrefs();
     final next = current.copyWith(
@@ -72,6 +74,8 @@ class PrefsNotifier extends AsyncNotifier<AppPrefs> {
       swipeLeftAction: swipeLeftAction ?? current.swipeLeftAction,
       instantNotifications:
           instantNotifications ?? current.instantNotifications,
+      sortMode: sortMode ?? current.sortMode,
+      autoEmptyTrashDays: autoEmptyTrashDays ?? current.autoEmptyTrashDays,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
     );
     state = AsyncData(next);

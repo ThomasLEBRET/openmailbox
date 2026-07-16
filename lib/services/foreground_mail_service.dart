@@ -1,28 +1,36 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import 'imap_service.dart';
 import 'notification_service.dart';
 import 'storage_service.dart';
 
-/// "Instant" new-mail notifications on Android via a foreground service that
-/// holds an IMAP IDLE connection open (like Thunderbird/K-9 on desktop).
+/// Background new-mail notifications on Android via a foreground service.
 ///
-/// This is the opt-in background mechanism: IDLE lets the server push as soon
-/// as mail lands, but the OS only permits a persistent connection from a
-/// *foreground* service, which comes with an always-visible notification.
-/// When off, new mail only surfaces while the app is open. (A WorkManager
-/// periodic poll used to cover the "app closed" case, but its native
-/// auto-init crashed the app at startup, so it was removed.)
+/// It scans **every folder's** unread count on a short interval and notifies
+/// when any folder grows — not just INBOX. This matters because server-side
+/// filters often deliver mail straight into sub-folders, bypassing INBOX
+/// entirely; an INBOX-only IMAP IDLE would never see those (and did not).
 ///
-/// Every native touch-point is guarded: a plugin failure here must never
-/// take the app down (a plugin crash at startup already did once).
+/// A foreground service is the only way Android lets an app keep polling
+/// while closed, hence the persistent notification. It's opt-in
+/// ([AppPrefs.instantNotifications]); off, new mail only surfaces while the
+/// app is open. (A WorkManager 15-min poll used to cover the closed case but
+/// its native auto-init crashed the app at startup, so it was removed.)
+///
+/// Every native touch-point is guarded — a plugin failure here must never
+/// take the app down.
 
 const _fgChannelId = 'om_watcher';
 const _fgChannelName = 'Surveillance des messages';
+
+/// How often the watcher re-scans all folders. The foreground service stays
+/// alive continuously, so this can be far tighter than WorkManager's 15-min
+/// floor — new mail in any folder surfaces within roughly this window.
+const _scanInterval = Duration(seconds: 60);
 
 /// Registers the foreground-task channel + options. Cheap, idempotent, and
 /// does not start anything — safe to call at every startup.
@@ -34,14 +42,14 @@ void initForegroundTask() {
         channelId: _fgChannelId,
         channelName: _fgChannelName,
         channelDescription:
-            'Maintient la connexion pour les notifications instantanées.',
+            'Vérifie l\'arrivée de nouveaux messages en arrière-plan.',
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
       ),
       iosNotificationOptions: const IOSNotificationOptions(),
       foregroundTaskOptions: ForegroundTaskOptions(
-        // Heartbeat: reconnect if IDLE dropped. Not the mail-check itself —
-        // that is push-driven by the server over IDLE.
+        // The scan itself runs on our own Timer; this is just a coarse
+        // safety heartbeat that re-arms it if the isolate was frozen.
         eventAction: ForegroundTaskEventAction.repeat(5 * 60 * 1000),
         autoRunOnBoot: true,
         autoRunOnMyPackageReplaced: true,
@@ -50,13 +58,11 @@ void initForegroundTask() {
       ),
     );
   } catch (_) {
-    // Foreground-task plumbing unavailable — instant mode just won't start.
+    // Foreground-task plumbing unavailable — background mode just won't start.
   }
 }
 
-/// Starts the IDLE watcher. No-op off Android, if already running, or if the
-/// notification permission is missing (a FGS with a hidden notification is
-/// killed by the OS).
+/// Starts the watcher. No-op off Android or if already running.
 Future<void> startMailWatcher() async {
   if (!Platform.isAndroid) return;
   try {
@@ -65,7 +71,7 @@ Future<void> startMailWatcher() async {
       serviceId: 42,
       serviceTypes: const [ForegroundServiceTypes.dataSync],
       notificationTitle: 'OpenMailbox',
-      notificationText: 'Surveillance de la boîte de réception',
+      notificationText: 'Surveillance de vos dossiers',
       callback: startMailWatcherCallback,
     );
   } catch (_) {
@@ -88,80 +94,78 @@ void startMailWatcherCallback() {
 }
 
 class _MailWatcherHandler extends TaskHandler {
-  MailClient? _client;
-  bool _connecting = false;
+  final _imap = ImapService();
+  final _storage = StorageService();
+  Timer? _timer;
+  bool _scanning = false;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     WidgetsFlutterBinding.ensureInitialized();
-    await _connect();
+    await NotificationService.init();
+    // First scan establishes the baseline (no notification); then poll.
+    await _scan();
+    _timer = Timer.periodic(_scanInterval, (_) => _scan());
   }
 
-  /// Reconnects and re-arms IDLE. Serialized via [_connecting] so the
-  /// heartbeat can't stack a second connection on top of a live one.
-  Future<void> _connect() async {
-    if (_connecting) return;
-    _connecting = true;
+  Future<void> _scan() async {
+    if (_scanning) return; // A slow scan must not overlap the next tick.
+    _scanning = true;
     try {
-      await _client?.disconnect();
-      _client = null;
-
-      final storage = StorageService();
-      final account = (await storage.loadAccounts()).current;
+      final account = (await _storage.loadAccounts()).current;
       if (account == null) return;
-      final password = await storage.readImapPassword(account.id);
+      final password = await _storage.readImapPassword(account.id);
       if (password == null) return;
 
-      final imap = account.config.imap;
-      final smtp = account.config.smtp;
-      final mailAccount = MailAccount.fromManualSettings(
-        name: 'openmailbox',
-        email: imap.username,
-        userName: imap.username,
-        loginName: imap.username,
-        password: password,
-        incomingHost: imap.host,
-        incomingPort: imap.port,
-        outgoingHost: smtp.host,
-        outgoingPort: smtp.port,
-      );
+      await _imap.ensureConnected(account.config.imap, password);
+      final folders = await _imap.runExclusive(_imap.listFolders);
 
-      final client = MailClient(mailAccount, isLogEnabled: false);
-      await client.connect();
-      await client.selectInbox();
-      await NotificationService.init();
+      final current = <String, int>{
+        for (final folder in folders) folder.path: folder.unread,
+      };
+      final baseline = await _storage.readFolderUnread();
 
-      // A new message landing in INBOX fires MailLoadEvent while IDLE is on.
-      client.eventBus.on<MailLoadEvent>().listen((event) {
-        final unread = client.selectedMailbox?.messagesUnseen ?? 1;
-        NotificationService.notifyNewMail(1, unread <= 0 ? 1 : unread);
-      });
+      // Sum the growth across folders we've already seen. A folder absent
+      // from the baseline (first run, or newly created) is recorded but
+      // never notified, so we don't announce the whole mailbox at once.
+      var newCount = 0;
+      for (final entry in current.entries) {
+        final previous = baseline[entry.key];
+        if (previous != null && entry.value > previous) {
+          newCount += entry.value - previous;
+        }
+      }
+      final totalUnread =
+          current.values.fold<int>(0, (sum, value) => sum + value);
 
-      // startPolling uses IMAP IDLE where the server supports it (Mailo
-      // does), otherwise a NOOP poll — either way MailLoadEvent fires.
-      await client.startPolling();
-      _client = client;
+      await _storage.writeFolderUnread(current);
+      if (newCount > 0) {
+        await NotificationService.notifyNewMail(newCount, totalUnread);
+      }
     } catch (_) {
-      // Leave _client null; the next heartbeat retries.
-      _client = null;
+      // Network hiccup or dead session: drop the connection so the next
+      // scan reconnects cleanly. Never throw from here.
+      _imap.reset();
     } finally {
-      _connecting = false;
+      _scanning = false;
     }
   }
 
+  /// Coarse heartbeat: if our Timer somehow died (isolate frozen/resumed),
+  /// bring it back.
   @override
   void onRepeatEvent(DateTime timestamp) {
-    final client = _client;
-    if (client == null || !client.isConnected) {
-      _connect();
+    if (_timer == null || !_timer!.isActive) {
+      _timer = Timer.periodic(_scanInterval, (_) => _scan());
     }
   }
 
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _timer?.cancel();
+    _timer = null;
     try {
-      await _client?.disconnect();
+      await _imap.disconnect();
     } catch (_) {}
-    _client = null;
   }
 }

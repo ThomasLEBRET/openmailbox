@@ -154,10 +154,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() {
-      _refreshAll();
+    Future.microtask(() async {
+      await _refreshAll();
       // Start the new-mail watcher (in-app notifications + badge).
       ref.read(inboxWatcherProvider);
+      // Auto-empty the trash by age, once, after the folder list is fresh.
+      final prefs = await ref.read(prefsProvider.future);
+      if (prefs.autoEmptyTrashDays > 0 && mounted) {
+        await ref
+            .read(emailListProvider.notifier)
+            .autoEmptyTrashIfDue(prefs.autoEmptyTrashDays);
+      }
     });
   }
 
@@ -336,6 +343,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _notify(label == null ? 'Rien à annuler' : 'Annulé : $label');
   }
 
+  /// Empties the trash after confirmation (permanent, not undoable).
+  Future<void> _emptyTrash() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Vider la corbeille ?'),
+        content: const Text(
+            'Tous les messages de la corbeille seront supprimés '
+            'définitivement. Cette action est irréversible.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Vider'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final count = await ref.read(emailListProvider.notifier).emptyTrash();
+      _notify(count == 0
+          ? 'La corbeille était déjà vide'
+          : 'Corbeille vidée ($count message${count > 1 ? 's' : ''})');
+    } catch (e) {
+      _notify('Échec du vidage : $e');
+    }
+  }
+
   /// Reader shortcuts (toolbar hints: R, F, U, ⌫; J/K to navigate).
   Map<ShortcutActivator, VoidCallback> get _shortcuts {
     final selected = _selected;
@@ -499,18 +538,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Future<void> _bulkDelete() async {
     final uids = _checked.toList();
     setState(() => _checked.clear());
-    final notifier = ref.read(emailListProvider.notifier);
-    var failures = 0;
-    for (final uid in uids) {
-      try {
-        await notifier.deleteEmail(uid);
-      } catch (_) {
-        failures++;
-      }
+    try {
+      await ref.read(emailListProvider.notifier).deleteMany(uids);
+      _notify(
+          '${uids.length} email${uids.length > 1 ? 's' : ''} supprimé${uids.length > 1 ? 's' : ''}');
+    } catch (e) {
+      _notify('Échec de la suppression — emails restaurés ($e)');
     }
-    _notify(failures == 0
-        ? '${uids.length} email${uids.length > 1 ? 's' : ''} supprimé${uids.length > 1 ? 's' : ''}'
-        : 'Suppression partielle : $failures échec${failures > 1 ? 's' : ''}');
+  }
+
+  Future<void> _bulkMove() async {
+    final uids = _checked.toList();
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final current = ref.read(currentFolderProvider);
+    final targets = folders.where((f) => f.path != current).toList();
+    if (targets.isEmpty) return;
+
+    final target = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('Déplacer ${uids.length} email${uids.length > 1 ? 's' : ''} vers…',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 15)),
+            ),
+            for (final folder in targets)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(_folderLabel(folder.path)),
+                onTap: () => Navigator.of(context).pop(folder.path),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (target == null) return;
+    setState(() => _checked.clear());
+    try {
+      await ref.read(emailListProvider.notifier).moveMany(uids, target);
+      _notify('${uids.length} email${uids.length > 1 ? 's' : ''} déplacé${uids.length > 1 ? 's' : ''}');
+    } catch (e) {
+      _notify('Échec du déplacement ($e)');
+    }
   }
 
   Widget _buildSelectionBar() {
@@ -535,6 +609,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             tooltip: 'Étoile',
             icon: const Icon(Icons.star_outline_rounded, size: 20),
             onPressed: _bulkFlag,
+          ),
+          IconButton(
+            tooltip: 'Déplacer',
+            icon: const Icon(Icons.drive_file_move_outlined, size: 20),
+            onPressed: _bulkMove,
           ),
           IconButton(
             tooltip: 'Supprimer',
@@ -568,6 +647,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               setState(() => _searchOpen = true);
             }
           },
+          onEmptyTrash: _emptyTrash,
         ),
         if (_searchOpen)
           Padding(
@@ -753,13 +833,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: Text(_selected == null
             ? _folderLabel(ref.watch(currentFolderProvider))
             : ''),
-        actions: [
-          if (_selected == null)
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () => ref.read(emailListProvider.notifier).sync(),
-            ),
-        ],
+        actions: _selected == null ? _mobileActions() : null,
       ),
       drawer: Drawer(child: sidebar),
       floatingActionButton: _selected == null
@@ -772,6 +846,58 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  /// Mobile AppBar actions: sort, empty-trash (in trash), refresh.
+  List<Widget> _mobileActions() {
+    final scheme = Theme.of(context).colorScheme;
+    final folders = ref.watch(folderListProvider).value;
+    final currentPath = ref.watch(currentFolderProvider);
+    final folder = folders?.where((f) => f.path == currentPath).firstOrNull;
+    final isTrash = folders != null && findTrashPath(folders) == currentPath;
+    final currentSort =
+        (ref.watch(prefsProvider).value ?? const AppPrefs()).sort;
+    return [
+      if (isTrash && (folder?.total ?? 0) > 0)
+        IconButton(
+          tooltip: 'Vider la corbeille',
+          icon: Icon(Icons.delete_sweep_outlined, color: scheme.error),
+          onPressed: _emptyTrash,
+        ),
+      PopupMenuButton<SortMode>(
+        tooltip: 'Trier',
+        icon: const Icon(Icons.sort_rounded),
+        initialValue: currentSort,
+        onSelected: (mode) =>
+            ref.read(prefsProvider.notifier).apply(sortMode: mode.name),
+        itemBuilder: (context) => [
+          for (final mode in SortMode.values)
+            PopupMenuItem(
+              value: mode,
+              child: Row(
+                children: [
+                  Icon(mode.icon,
+                      size: 18,
+                      color: mode == currentSort
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant),
+                  const SizedBox(width: 10),
+                  Text(mode.label,
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: mode == currentSort
+                              ? FontWeight.w700
+                              : FontWeight.w400)),
+                ],
+              ),
+            ),
+        ],
+      ),
+      IconButton(
+        icon: const Icon(Icons.refresh),
+        onPressed: () => ref.read(emailListProvider.notifier).sync(),
+      ),
+    ];
+  }
+
   Widget _buildEmailList() {
     final emailsAsync = ref.watch(emailListProvider);
 
@@ -782,7 +908,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         onRetry: () => ref.read(emailListProvider.notifier).sync(),
       ),
       data: (allEmails) {
-        final emails = _applyLocalFilter(allEmails);
+        final prefs = ref.watch(prefsProvider).value ?? const AppPrefs();
+        final emails = prefs.sort.apply(_applyLocalFilter(allEmails));
         if (emails.isEmpty) {
           return _EmptyPane(
             icon: _localQuery.isNotEmpty || _serverResults
@@ -868,11 +995,13 @@ class _EmailListHeader extends ConsumerWidget {
     required this.label,
     this.searchOpen = false,
     this.onToggleSearch,
+    this.onEmptyTrash,
   });
 
   final String label;
   final bool searchOpen;
   final VoidCallback? onToggleSearch;
+  final VoidCallback? onEmptyTrash;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -880,11 +1009,12 @@ class _EmailListHeader extends ConsumerWidget {
     final isSyncing = ref.watch(emailListProvider).isLoading ||
         ref.watch(emailSyncingProvider);
     final currentPath = ref.watch(currentFolderProvider);
-    final folder = ref
-        .watch(folderListProvider)
-        .value
-        ?.where((f) => f.path == currentPath)
-        .firstOrNull;
+    final folders = ref.watch(folderListProvider).value;
+    final folder = folders?.where((f) => f.path == currentPath).firstOrNull;
+    final isTrash =
+        folders != null && findTrashPath(folders) == currentPath;
+    final currentSort =
+        (ref.watch(prefsProvider).value ?? const AppPrefs()).sort;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
@@ -912,6 +1042,42 @@ class _EmailListHeader extends ConsumerWidget {
                   ),
               ],
             ),
+          ),
+          if (isTrash && onEmptyTrash != null && (folder?.total ?? 0) > 0)
+            IconButton(
+              tooltip: 'Vider la corbeille',
+              icon: Icon(Icons.delete_sweep_outlined,
+                  size: 20, color: scheme.error),
+              onPressed: onEmptyTrash,
+            ),
+          PopupMenuButton<SortMode>(
+            tooltip: 'Trier',
+            icon: const Icon(Icons.sort_rounded, size: 20),
+            initialValue: currentSort,
+            onSelected: (mode) =>
+                ref.read(prefsProvider.notifier).apply(sortMode: mode.name),
+            itemBuilder: (context) => [
+              for (final mode in SortMode.values)
+                PopupMenuItem(
+                  value: mode,
+                  child: Row(
+                    children: [
+                      Icon(mode.icon,
+                          size: 18,
+                          color: mode == currentSort
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant),
+                      const SizedBox(width: 10),
+                      Text(mode.label,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: mode == currentSort
+                                  ? FontWeight.w700
+                                  : FontWeight.w400)),
+                    ],
+                  ),
+                ),
+            ],
           ),
           if (onToggleSearch != null)
             IconButton(

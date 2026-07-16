@@ -379,6 +379,142 @@ class EmailListNotifier extends AsyncNotifier<List<Email>> {
     }
     return false;
   }
+
+  // --- Batch actions ---------------------------------------------------------
+  // Optimistic like the single-item versions, but one IMAP round trip for the
+  // whole set. No Cmd+Z for bulk (deliberate multi-select actions).
+
+  /// Moves several messages of the current folder to [targetPath] at once.
+  Future<void> moveMany(List<int> uids, String targetPath) async {
+    if (uids.isEmpty) return;
+    final accountId = _accountId;
+    final folder = ref.read(currentFolderProvider);
+    if (folder == targetPath) return;
+    final storage = ref.read(storageServiceProvider);
+    final emails = state.value ?? const <Email>[];
+    final set = uids.toSet();
+    final removed = emails.where((e) => set.contains(e.uid)).toList();
+    if (removed.isEmpty) return;
+    final unreadCount = removed.where((e) => !e.isRead).length;
+    final folderNotifier = ref.read(folderListProvider.notifier);
+
+    Future<void> shift(int direction) async {
+      await folderNotifier.adjustCounts(folder,
+          totalDelta: -direction * removed.length,
+          unreadDelta: -direction * unreadCount);
+      await folderNotifier.adjustCounts(targetPath,
+          totalDelta: direction * removed.length,
+          unreadDelta: direction * unreadCount);
+    }
+
+    state =
+        AsyncData(emails.where((e) => !set.contains(e.uid)).toList(growable: false));
+    for (final e in removed) {
+      await storage.deleteEmail(accountId, folder, e.uid);
+    }
+    unawaited(shift(1));
+
+    try {
+      await withImapSession(
+          ref, (imap) => imap.moveMessages(folder, uids, targetPath));
+    } catch (_) {
+      final current = state.value ?? const <Email>[];
+      final restored = [...current, ...removed]
+        ..sort((a, b) => b.date.compareTo(a.date));
+      if (ref.read(currentFolderProvider) == folder) {
+        state = AsyncData(restored);
+      }
+      await storage.replaceFolderEmails(accountId, folder, restored);
+      unawaited(shift(-1));
+      rethrow;
+    }
+  }
+
+  /// Deletes several messages: to trash in batch, or permanently when the
+  /// current folder is already the trash.
+  Future<void> deleteMany(List<int> uids) async {
+    if (uids.isEmpty) return;
+    final accountId = _accountId;
+    final folder = ref.read(currentFolderProvider);
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final trashPath = findTrashPath(folders);
+    if (trashPath != null && folder != trashPath) {
+      await moveMany(uids, trashPath);
+      return;
+    }
+
+    final storage = ref.read(storageServiceProvider);
+    final emails = state.value ?? const <Email>[];
+    final set = uids.toSet();
+    final removed = emails.where((e) => set.contains(e.uid)).toList();
+    if (removed.isEmpty) return;
+    final unreadCount = removed.where((e) => !e.isRead).length;
+    final folderNotifier = ref.read(folderListProvider.notifier);
+
+    state =
+        AsyncData(emails.where((e) => !set.contains(e.uid)).toList(growable: false));
+    for (final e in removed) {
+      await storage.deleteEmail(accountId, folder, e.uid);
+    }
+    unawaited(folderNotifier.adjustCounts(folder,
+        totalDelta: -removed.length, unreadDelta: -unreadCount));
+
+    try {
+      await withImapSession(ref, (imap) => imap.deleteMessages(folder, uids));
+    } catch (_) {
+      final current = state.value ?? const <Email>[];
+      final restored = [...current, ...removed]
+        ..sort((a, b) => b.date.compareTo(a.date));
+      state = AsyncData(restored);
+      await storage.replaceFolderEmails(accountId, folder, restored);
+      unawaited(folderNotifier.adjustCounts(folder,
+          totalDelta: removed.length, unreadDelta: unreadCount));
+      rethrow;
+    }
+  }
+
+  /// Empties the trash folder permanently. Returns how many were removed.
+  Future<int> emptyTrash() async {
+    final accountId = _accountId;
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final trashPath = findTrashPath(folders);
+    if (trashPath == null) return 0;
+    final count =
+        await withImapSession(ref, (imap) => imap.emptyFolder(trashPath));
+    final storage = ref.read(storageServiceProvider);
+    await storage.deleteAccountFolder(accountId, trashPath);
+    if (ref.read(currentFolderProvider) == trashPath) {
+      state = const AsyncData([]);
+    }
+    await ref.read(folderListProvider.notifier).refresh();
+    return count;
+  }
+
+  /// Auto-empties trash of messages older than [days] (0 = disabled).
+  /// Best-effort, silent — runs once after startup sync.
+  Future<void> autoEmptyTrashIfDue(int days) async {
+    if (days <= 0) return;
+    final folders = ref.read(folderListProvider).value ?? const [];
+    final trashPath = findTrashPath(folders);
+    if (trashPath == null) return;
+    final before = DateTime.now().subtract(Duration(days: days));
+    try {
+      final removed = await withImapSession(
+          ref, (imap) => imap.deleteOlderThan(trashPath, before));
+      if (removed > 0) {
+        final accountId = _accountId;
+        await ref
+            .read(storageServiceProvider)
+            .deleteAccountFolder(accountId, trashPath);
+        if (ref.read(currentFolderProvider) == trashPath) {
+          state = const AsyncData([]);
+        }
+        await ref.read(folderListProvider.notifier).refresh();
+      }
+    } catch (_) {
+      // Best-effort.
+    }
+  }
 }
 
 final emailListProvider =

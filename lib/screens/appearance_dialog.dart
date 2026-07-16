@@ -192,6 +192,20 @@ class AppearanceDialog extends ConsumerWidget {
                     notifier.apply(undoSendSeconds: selection.first),
               ),
               const SizedBox(height: 16),
+              _label(context, 'Vider la corbeille automatiquement'),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('Jamais')),
+                  ButtonSegment(value: 7, label: Text('7 j')),
+                  ButtonSegment(value: 30, label: Text('30 j')),
+                  ButtonSegment(value: 90, label: Text('90 j')),
+                ],
+                selected: {prefs.autoEmptyTrashDays},
+                onSelectionChanged: (selection) =>
+                    notifier.apply(autoEmptyTrashDays: selection.first),
+              ),
+              const SizedBox(height: 16),
               _label(context, 'Gestes de balayage (mobile)'),
               const SizedBox(height: 8),
               _swipeRow(

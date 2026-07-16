@@ -97,6 +97,26 @@ class StorageService {
     return state;
   }
 
+  // --- Background watcher state ---------------------------------------------
+
+  /// Per-folder unread counts seen at the last background scan, so the
+  /// watcher can detect which folders grew (path → unread).
+  Future<Map<String, int>> readFolderUnread() async {
+    final file = await _fileIn('folder_unread.json');
+    if (!file.existsSync()) return {};
+    try {
+      final map = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      return map.map((key, value) => MapEntry(key, (value as num).toInt()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> writeFolderUnread(Map<String, int> counts) async {
+    final file = await _fileIn('folder_unread.json');
+    await file.writeAsString(jsonEncode(counts));
+  }
+
   // --- UI preferences (non-secret) ------------------------------------------
 
   Future<void> savePrefs(AppPrefs prefs) async {
