@@ -36,3 +36,6 @@ macos/Pods/
 # Secrets
 .env
 *.p12
+
+# GreenMail test server jar (downloaded by scripts/greenmail.sh)
+tools/greenmail-standalone.jar

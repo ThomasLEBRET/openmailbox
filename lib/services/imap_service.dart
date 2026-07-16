@@ -14,6 +14,12 @@ import '../models/folder.dart';
 /// Call [reset] after a network error so the next call reconnects, and
 /// [disconnect] when the account changes.
 class ImapService {
+  /// [secure] is always true in production (TLS). Integration tests point it
+  /// at a local plaintext test server (GreenMail) by passing false.
+  ImapService({this.secure = true});
+
+  final bool secure;
+
   ImapClient? _client;
   ImapConfig? _connectedConfig;
   String? _connectedPassword;
@@ -108,7 +114,7 @@ class ImapService {
         'connect+login',
         () async {
           await fresh
-              .connectToServer(config.host, config.port, isSecure: true)
+              .connectToServer(config.host, config.port, isSecure: secure)
               .timeout(_connectTimeout);
           await fresh.login(config.username, password).timeout(_connectTimeout);
         });

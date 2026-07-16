@@ -1,0 +1,5 @@
+tags:
+  integration:
+    # End-to-end tests that talk to a local GreenMail IMAP/SMTP server.
+    # They skip themselves when it isn't reachable on localhost:3143.
+    # Start it with: scripts/greenmail.sh
