@@ -31,7 +31,14 @@ class NotificationService {
       if (Platform.isAndroid) {
         final android = _plugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
-        await android?.requestNotificationsPermission();
+        // Its own try/catch: requesting the runtime permission needs a
+        // foreground Activity and throws in a background/foreground-service
+        // isolate. That must not abort init — the permission is already
+        // granted there, and the channel + _ready still need to be set up,
+        // otherwise the service could never post a notification.
+        try {
+          await android?.requestNotificationsPermission();
+        } catch (_) {}
         // Pre-create the channel (idempotent) rather than relying on it being
         // created lazily on the first notification.
         await android?.createNotificationChannel(

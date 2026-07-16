@@ -77,6 +77,11 @@ abstract class AppPrefs with _$AppPrefs {
     /// Mobile swipe actions on a list row ([SwipeAction] names).
     @Default('read') String swipeRightAction,
     @Default('delete') String swipeLeftAction,
+
+    /// Android only: keep a foreground service holding an IMAP IDLE
+    /// connection so new mail notifies near-instantly (app closed), at the
+    /// cost of a persistent notification. Off = periodic 15-min check only.
+    @Default(false) bool instantNotifications,
     @Default(0) int updatedAt,
   }) = _AppPrefs;
 

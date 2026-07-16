@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/prefs.dart';
 import '../providers/prefs_provider.dart';
+import '../services/foreground_mail_service.dart';
+import '../services/notification_service.dart';
 
 /// Appearance customization: theme mode, accent color, density.
 /// Every change applies instantly and syncs to the other devices.
@@ -204,6 +208,33 @@ class AppearanceDialog extends ConsumerWidget {
                 current: prefs.swipeLeft,
                 onChanged: (a) => notifier.apply(swipeLeftAction: a.name),
               ),
+              if (Platform.isAndroid) ...[
+                const SizedBox(height: 16),
+                _label(context, 'Notifications'),
+                const SizedBox(height: 4),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Notifications instantanées',
+                      style: TextStyle(fontSize: 14)),
+                  subtitle: const Text(
+                    'Connexion maintenue en arrière-plan pour recevoir les '
+                    'mails app fermée (notification permanente, un peu plus de '
+                    'batterie). Sinon, notifications seulement quand l\'app est '
+                    'ouverte.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  value: prefs.instantNotifications,
+                  onChanged: (value) async {
+                    notifier.apply(instantNotifications: value);
+                    if (value) {
+                      await NotificationService.init();
+                      await startMailWatcher();
+                    } else {
+                      await stopMailWatcher();
+                    }
+                  },
+                ),
+              ],
             ],
           ),
         ),
